@@ -13,3 +13,5 @@ time exploring the use of entirely new methods for each of us. Through this
 ebook, we aim to share the knowledge we have gained during this period. There
 may be errors in the codes provided, so if you spot any, please don't hesitate
 to point them out to us.
+
+You can access the HMTL version of this ebook here: <https://3wen.github.io/epidemics-with-r/>.
