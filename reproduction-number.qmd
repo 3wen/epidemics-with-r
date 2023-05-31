@@ -1,0 +1,939 @@
+# Estimating the reproduction number {#sec-reproduction-number}
+
+In this chapter, we provide some codes to estimate the reproduction number $\mathcal{R}_0$.
+
+## Load data
+
+```{r}
+# FOR UNIX USERS 
+Sys.setlocale("LC_ALL", "en_US.UTF-8")
+
+# FOR WINDOWS USERS
+# Sys.setlocale("LC_ALL", "English_United States")
+```
+
+Some packages that will be used:
+
+```{r}
+library(tidyverse)
+library(scales)
+library(minpack.lm)
+library(mvtnorm)
+```
+
+Let us load the data (results obtained from [Chapter -@sec-covid-data]).
+
+```{r}
+load("data/data_after_load.rda")
+```
+
+
+## Objective
+
+
+In this section, we present the codes to estimate the reproduction number of the first and second waves using either an **exponential model** or a **generalized exponential model**. Based on those models, we estimate the reproduction number $\mathcal{R}_0$ for both waves.
+
+We consider the following start and end dates for each sample, for each country:
+
+| Wave | Start | End |
+| :----- | ------: | ------: |
+| First | Date at which the number of cases exceeds 0 | Seven days after the stringency index reaches its max value (during the first 100 days of the epidemics) |
+| Second | Sixty days after the stringency index begins to decrease from its maximum value | September 30, 2020 |
+
+For Sweden, the severity index does not reach 70. Here, we use the dates from Ireland for the definition of those for Sweden.
+
+
+For the estimation of the reproduction number $\mathcal{R}_0$, we rely on the estimations made by @Li-etal2020. We propose to set the window size $h$ so that it represents 0.99 of the probability in the Gamma distribution of the serial interval.
+
+```{r}
+# Individual data
+# From Li et al. (2020):
+mean_si <- 7.5
+std_si <- 3.4
+
+shape <- (mean_si / std_si)^2
+scale <- mean_si / shape
+h <- ceiling(qgamma(p = .99, shape = shape, scale = scale))
+h
+```
+
+## Some functions needed for the estimation
+
+Let us create a function that, when provided with the name of the country, returns a table for that country that contains the following columns:
+
+- `start_first_wave`: start of the first wave, defined as the first date when the cumulative number of cases is greater than 1
+- `start_high_stringency`: date at which the stringency index reaches 70 for the first time within the first 100 days of the sample (for Sweden, as the index never reached 70, we use the time at which the stringency is at its maximum value for the first time within the same time interval)
+- `start_reduce_restrict`: moment at which the restrictions of the first wave starts to lower
+- `start_date_sample_second_wave`: 60 days after the relaxation of restrictions (60 days after after `start_reduce_restrict`)
+- `length_high_stringency`: number of days between `start_high_stringency` and ` `start_reduce_restrict`.
+
+
+```{r}
+#' Gives the dates of the different periods (first wave, start of containment, ...)
+#' @param country_name name of the country
+#' @param type if `"deaths"` returns the number of deaths, otherwise the number of cases
+get_dates <- function(country_name) {
+  df_country <- confirmed_df |> 
+    filter(country == !!country_name)
+  
+  # Start of the first wave
+  start_first_wave <- 
+    df_country |> 
+    arrange(date) |> 
+    filter(value > 0) |> 
+    slice(1) |> 
+    magrittr::extract2("date")
+  
+  # Start of period with severity greater or equal than 70 index among the first 100 days
+  start_high_stringency <- 
+    df_country |> 
+    slice(1:100) |>
+    filter(stringency_index >= 70) |> 
+    slice(1) |> 
+    magrittr::extract2("date")
+  
+  # Max for Sweden
+  if(country_name == "Sweden"){
+    start_high_stringency <- 
+      df_country |> 
+      slice(1:100) |>
+      arrange(desc(stringency_index), date) |>
+      slice(1) |> 
+      magrittr::extract2("date")
+  }
+  
+  # Max stringency first 100 days
+  start_max_stringency <- 
+    df_country |> 
+    slice(1:100) |>
+    arrange(desc(stringency_index), date) |>
+    slice(1) |> 
+    magrittr::extract2("date")
+
+  # Moment at which the restrictions of the first wave starts to lower
+  start_reduce_restrict <- 
+    df_country |> 
+    arrange(date) |> 
+    filter(date >= start_max_stringency) |> 
+    mutate(tmp = dplyr::lag(stringency_index)) |> 
+    mutate(same_strin = stringency_index == tmp) |> 
+    mutate(same_strin = ifelse(row_number()==1, TRUE, same_strin)) |> 
+    filter(same_strin == FALSE) |> 
+    slice(1) |>
+    magrittr::extract2("date")
+  
+  start_date_sample_second_wave <- start_reduce_restrict + lubridate::ddays(60)
+  
+  
+  # Length of high stringency period
+  length_high_stringency <- lubridate::interval(
+    start_high_stringency, start_reduce_restrict) / lubridate::ddays(1)
+  
+  tibble(
+    country = country_name,
+    start_first_wave = start_first_wave,
+    start_high_stringency = start_high_stringency,
+    start_reduce_restrict = start_reduce_restrict,
+    start_date_sample_second_wave = start_date_sample_second_wave,
+    length_high_stringency = length_high_stringency
+  )
+}# End of get_dates()
+```
+
+If we apply this function for each of the 10 countries of interest:
+
+```{r}
+#| tbl-cap: Key dates for each countries
+#| label: tbl-key-dates
+map_df(names_countries, get_dates) |> 
+  kableExtra::kable()
+```
+
+
+
+Based on those dates, we can create a function that will prepare the dataset that will be used to estimate the exponential model, for each country, for the first wave (`wave="first"`{.R}) or for the second (`wave="second"`{.R}). This functions returns a list of two elements:
+
+1. The dataset
+2. The table which gives the dates obtained with the function `get_dates()`. We add two columns to that table : the start and end date of the sample.
+
+```{r}
+#' Extracts the cases data for a country
+#' @param country_name name of the country
+#' @param sample 
+get_cases_country <- function(country_name,
+                              sample = c("first", "second")) {
+  df_country <- 
+    confirmed_df |> 
+    filter(country == !!country_name)
+  dates_country <- get_dates(country_name)
+  
+  # Maximum of the severity index
+  max_severity <- max(df_country$stringency_index, na.rm=TRUE)
+  dates_country$max_severity <- max_severity
+  
+  if (sample == "first") {
+    df_country <- 
+      df_country |> 
+      # `out_of_sample_horizon` more days for out-of-sample pred
+      filter(
+        date >= dates_country$start_first_wave,
+        date <= (dates_country$start_high_stringency + 
+                   lubridate::ddays(7) + 
+                   lubridate::ddays(out_of_sample_horizon))
+      )
+  } else {
+    df_country <- 
+      df_country |> 
+      filter(date >= dates_country$start_date_sample_second_wave)
+    
+    # Let us remove the number of cases of the first date of this sample
+    # to all observation (translation to 1)
+    start_val_cases <- df_country$value[1]
+    df_country <- 
+      df_country |> 
+      mutate(value = value - start_val_cases + 1)
+  }
+  
+  
+  # Moving Average for missing values (i.e., for Ireland)
+  if (any(is.na(df_country$value))) {
+    replacement_values <- round(
+      zoo::rollapply(
+        df_country$value, 
+        width=3, 
+        FUN=function(x) mean(x, na.rm=TRUE), 
+        by=1, by.column=TRUE, partial=TRUE, fill=NA, align="center"
+      )
+    )
+    # Replace only missing values
+    df_country <- 
+      df_country |> 
+      mutate(replacement_values = !!replacement_values) |> 
+      mutate(
+        value = ifelse(
+          is.na(value), 
+          yes = replacement_values, 
+          no = value
+        )
+      ) |> 
+      select(-replacement_values)
+  }
+  
+  df_country <- 
+    df_country |> 
+    mutate(t = row_number() - 1) |> 
+    mutate(y = value)
+  
+  dates_country <- 
+    dates_country |> 
+    mutate(
+      start_sample = first(df_country$date),
+      end_sample_in = last(df_country$date) - 
+        lubridate::ddays(out_of_sample_horizon),
+      end_sample_out = last(df_country$date)
+    )
+
+  list(df_country = df_country, dates_country = dates_country)
+}
+```
+
+
+For example, for the UK:
+```{r}
+out_of_sample_horizon <- 0 # This variable is explained later
+cases_uk <- get_cases_country(
+  country_name = "United Kingdom", sample = "first"
+)
+cases_uk$df_country
+cases_uk$dates_country
+```
+
+We need to write the prediction function for the exponential model and for the generalized exponential model. To compute the reproduction number $\mathcal{R}_0$, we also need to write down the first derivative of these functions, with respect to the time component (`x` in the functions).
+
+For the exponential model:
+```{r}
+#' Exponential model function 
+#' @param theta vector of named parameters
+#' @param x observation / training example
+exponential_f <- function(theta, x) {
+  c0 <- theta[["c0"]]
+  r <- theta[["r"]]
+  c0 * exp(r * x)
+}
+```
+
+```{r}
+#' Derivative of exponential for R0
+#' @param theta vector of coefficients
+#' @param x time values
+derivative_exponential <- function(theta, x) {
+  c0 <- theta[["c0"]]
+  r <- theta[["r"]]
+  c0 * r * exp(r * x)
+}
+```
+
+For the generalized exponential model:
+```{r}
+#' General Exponential model function 
+#' @param theta vector of named parameters
+#' @param x observation / training example
+gen_exponential_f <- function(theta, x) {
+  A <- theta[["A"]]
+  r <- theta[["r"]]
+  alpha <- theta[["alpha"]]
+  ((1 - alpha) * r * x + A)^( 1 / (1 - alpha))
+}
+```
+
+
+```{r}
+#' Derivative of generalized exponential for R0
+derivative_gen_exponential <- function(theta, x) {
+  A <- theta[["A"]]
+  r <- theta[["r"]]
+  alpha <- theta[["alpha"]]
+  # r * ( ( 1 - alpha ) * r * x + A )^( alpha / ( 1 - alpha ) )
+  numb <- A-alpha*r*x + r*x
+  expon <- alpha / ( 1 - alpha )
+  r * sign(numb) * abs(numb)^expon
+}
+```
+
+
+The effective reproduction number $R_t$ is obtained, with the exponential model as follows [@Cori-etal2013]:
+
+$$
+R_t = \frac{I_t}{\sum_{s=1}^t I_{t-s} \omega(s)},
+$$
+An estimation of the reproduction number $\mathcal{R}_0$, can be obtained by truncating this summation:
+$$
+R_t = \frac{I_t}{\sum_{s=1}^h I_{t-s} \omega(s)}
+$$
+
+
+
+```{r}
+#' R0 for exponential
+#' 
+#' @param ti
+#' @param h size of the window
+#' @param theta estimated coefficients
+#' @param shape @param scale shape and scale parameters of the Gamma distribution
+R0_expo <- function(ti,
+                    h, 
+                    theta,
+                    shape,
+                    scale) {
+  s_R <- 0
+  for (s in 1:h) {
+    s_R <- s_R + 
+      derivative_exponential(theta, ti-s) * 
+      dgamma(s, shape = shape, scale = scale)
+  }
+  
+  R0 <- derivative_exponential(theta, ti) / s_R
+  R0
+}
+```
+
+
+For the generalized exponential model:
+
+$$
+R_t = \frac{((1-\alpha)\,r\,t+A)^{\alpha/(1-\alpha)}}{\sum_{s=1}^h ((1-\alpha)\,r\,(t-s)+A)^{\alpha/(1-\alpha)} \omega(s)}.
+$$
+
+```{r}
+#' R0 for generalized exponential
+#' 
+#' @param ti
+#' @param h size of the window
+#' @param theta estimated coefficients
+#' @param shape @param scale shape and scale parameters of the Gamma distribution
+R0_gen_expo <- function(ti,
+                        h,
+                        theta,
+                        shape,
+                        scale) {
+  s_R <- 0
+  for (s in 1:h) {
+    s_R <- s_R + 
+      derivative_gen_exponential(theta, ti-s) * 
+      dgamma(s, shape = shape, scale = scale)
+  }
+  
+  R0 <- derivative_gen_exponential(theta, ti) / s_R
+  R0
+}
+```
+
+
+
+Let us define a loss function. We will use that function to try to find the parameters of the model (either the exponential model or the generalized exponential model) which minimize it. Note that we use the `nls.lm()`{.R} function from {minpack.lm}; hence we only need to compute the residuals and not the residual sum of square.
+
+```{r}
+#' Loss function
+#' 
+#' @param theta vector of named parameters of the model
+#' @param fun prediction function of the model
+#' @param y target variable
+#' @param t time component (feature)
+loss_function <- function(theta,
+                          fun,
+                          y,
+                          t) {
+  (y - fun(theta = theta, x = t))
+}
+```
+
+Once the model are estimated, we can compute some goodness of fit criteria. Let us create a function that computes the AIC, the BIC and the RMSE for a specific model. The function expects three arguments: the prediction function of the model (`f`), the values for the parameters of the model (in a named vector – `theta`), and the observations (`data`).
+
+```{r}
+#' Compute some goodness of fit criteria
+#' 
+#' @param f prediction function of the model
+#' @param data data that contains the two columns `y` and `t`
+#' @param theta estimated coefficients for the model (used in `f`)
+get_criteria <- function(f,
+                         data,
+                         theta) {
+  n <- nrow(data)
+  k <- length(theta)
+  w <- rep(1, n)
+  
+  errors <- loss_function(
+    theta = theta,
+    fun = f,
+    y = data$y,
+    t = data$t
+  )
+  
+  mse <- sum(errors^2) / n
+  rmse <- sqrt(mse)
+  
+  # Log-likelihood
+  ll <- 0.5 * 
+    (sum(log(w)) - n * 
+       (log(2 * pi) + 1 - log(n) + log(sum(w * errors^2)))
+    )
+  aic <- 2 * (k + 1) - 2 * ll
+  bic <- -2 * ll + log(n) * (k + 1)
+  
+  c(AIC = aic, BIC = bic, RMSE = rmse)
+}
+```
+
+
+Lastly, to get a confidence interval for the estimated reproduction number $\mathcal{R}_0$, we create a function that performs simulations. From the estimated exponential model (or generalized exponential model), we compute the variance-covariance matrix and then randomly draw `n_repl` observations from a multivariate normal distribution. Based on these simulated numbers, we estimate the reproduction number using the `R0_expo()`{.R} or `R0_gen_expo()`{.R} function previously defined. We finally compute the average $\mathcal{R}_0$ and its standard deviation based on the `n_repl` simulations.
+
+```{r}
+#' Compute variance-covariance matrix from nls.lm
+#' Simulate a Normal and compute the corresponding $\mathcal{R}_0$
+#' 
+#' @param out result of nls.lm estimation
+#' @param n_repl numbr of desired replications (default to 1,000)
+#' @param ti 
+#' @param h window length
+#' @param model_name if `"Exponential"` then uses the Exponential model formula.
+#'  Otherwise, the General Exponential one.
+sim_ec <- function(out,
+                   n_repl = 1000,
+                   ti,
+                   h,
+                   model_name = c("Exponential", "Gen_Exponential")) {
+  
+  ibb    <- chol(out$hessian)
+  ih     <- chol2inv(ibb)
+  p      <- length(out$par)
+  rdf    <- length(out$fvec) - p
+  resvar <- out$deviance/rdf
+  se     <- sqrt(diag(ih) * resvar)
+  mean   <- out$par
+  
+  Sigv <- ih*resvar
+  the  <- rmvnorm(n = n_repl, mean = unlist(mean), sigma = Sigv)
+  
+  Ro <- rep(0,n_repl)
+  if (model_name == "Exponential") {
+    for (i in 1:n_repl) {
+      Ro[i] <- R0_expo(
+        ti = ti, 
+        h = h,
+        theta = the[i,],
+        shape = shape,
+        scale = scale
+      )
+    }
+  }else{
+    for (i in 1:n_repl) {
+      Ro[i] <- R0_gen_expo(
+        ti = ti,
+        h = h,
+        theta = the[i,], 
+        shape = shape,
+        scale = scale
+      )
+    }
+  }
+  
+  R0_mu <- mean(Ro)
+  R0_sd <- sd(Ro)
+  
+  c(R0_mu = R0_mu, R0_sd = R0_sd)
+}
+```
+
+
+
+## Example with only one country
+
+Let us estimate an exponential model first and then a generalized exponential model on the number of cases for one country, United Kingdom. Then we can create a wraping function to apply the codes to all countries.
+
+```{r}
+country_name <- "United Kingdom"
+```
+
+### Exponential model
+
+
+```{r}
+model_function <- exponential_f
+```
+
+
+We need to get the data that contain the number of cases for the UK. The previously defined `get_cases_country()`{.R} function can be used:
+
+```{r}
+cases_country <- get_cases_country(country_name, sample = "first")
+df_country <- cases_country$df_country
+dates_country <- cases_country$dates_country
+cases_country
+dates_country
+```
+
+
+Here are some starting values for the optimization algorithm:
+```{r}
+# The starting values
+start <- list(
+  c0 = 1,
+  r  = .14
+)
+```
+
+The function we want to minimize is the loss function, previously defined in `loss_function()`{.R}. It expects four arguments:
+
+- `theta`: a vector of named coefficients
+- `fun`: a prediction function (for the exponential model, we pass on the function `exponential_f()`{.R})
+- `y`: a vector of observed valued
+- `t`: a vector containing the time component.
+
+
+The `nls.lm()`{.R} function can then be used. We provide the starting values to the `par` argument. The `fn` argument is provided with the function to minimize. We also set the `maxiter` component of the `control` argument to `100`{.R} (maximum number of iterations). The argument `y`, `t` and `fun` are directly passed on to the arguments of the function given to the `fn` argument.
+
+```{r}
+# The estimated coefficients
+out <- nls.lm(
+  par = start, 
+  fn = loss_function,
+  y = df_country$y,
+  t = df_country$t,
+  fun = model_function,
+  control = nls.lm.control(maxiter = 100),
+  jac = NULL, lower = NULL, upper = NULL
+)
+```
+
+
+The results can be summarized as follows:
+
+```{r}
+summary(out)
+```
+
+The estimated coefficients can be extracted and saved in a tibble:
+```{r}
+params <- tibble(
+  model_type = "Exponential",
+  country = country_name,
+  coef_estimate_name = names(coef(out)),
+  coef_estimate = coef(out)
+)
+params
+```
+The goodness of fit criterion can be computed using the `get_criteria()`{.R} function previously defined.
+```{r}
+crit <- get_criteria(
+  f = model_function, 
+  data = df_country,
+  theta = params$coef_estimate
+)
+crit
+```
+
+And they can be stored in a tibble:
+```{r}
+criteria <- 
+  tibble(
+    model_type = "Exponential",
+    country = country_name,
+    bind_rows(crit)
+  )
+criteria
+```
+
+
+The $\mathcal{R}_0$ can be estimated with the `sim_ec()`{.R} function:
+
+```{r}
+R0_i <- sim_ec(
+  out = out,
+  n_repl = 1000,
+  ti = h,
+  h = h,
+  model_name = "Exponential"
+)
+R0_i
+```
+
+They can also be saved in a tibble:
+
+```{r}
+R0_df <- 
+  tibble(
+    model_type = "Exponential",
+    country = country_name,
+    bind_rows(R0_i)
+  )
+R0_df
+```
+Then, we can plot the observed values and the estimated ones. First, let us get the estimated values, using the obtained parameters:
+```{r}
+fitted_val_expo_uk <- 
+  df_country |> 
+  mutate(index = row_number()-1) |> 
+  mutate(
+    model_type   = "Exponential",
+    fitted_value = model_function(theta = params$coef_estimate, x = index)
+  )
+fitted_val_expo_uk
+```
+
+
+
+```{r}
+#| fig-cap: Number of cases, Exponential model
+#| label: fig-nb-cases-fit-expo
+ggplot(
+  data = fitted_val_expo_uk |> 
+    select(date, value, fitted_value) |> 
+    pivot_longer(cols = c(value, fitted_value)) |> 
+    mutate(name = factor(name, levels = c("value", "fitted_value"))),
+  mapping = aes(x = date, y = value, linetype = name)) +
+  geom_line() +
+  labs(x = NULL, y = "Cases") +
+  scale_y_continuous(labels = comma) +
+  scale_linetype_discrete(
+    NULL, 
+    labels = c("value" = "Observed values",
+               "fitted_value" = "Fitted values")) +
+  theme(
+    legend.position = "bottom",
+    plot.title.position = "plot"
+  )
+```
+
+
+We can compute the predicted values up to a given horizon. Let us assume that we want to make predictions up to the 80th day.
+```{r}
+horizon_pred <- 80
+obs <- df_country$y
+
+type_obs <- rep("obs", length(obs))
+if (length(obs) < horizon_pred) {
+  obs <- c(obs, rep(NA, horizon_pred-length(obs)))
+  type_obs <- c(
+    type_obs,
+    rep("out_of_sample", horizon_pred-length(type_obs))
+  )
+}
+
+length(obs)
+table(type_obs)
+```
+
+Let us keep track on the corresponding dates.
+```{r}
+dates <- df_country$date
+if (length(dates) < horizon_pred) {
+  dates <- dates[1] + lubridate::ddays(seq_len(horizon_pred) - 1)
+}
+tail(dates)
+```
+
+The predictions can be made, using the estimated parameters, and stored in a tibble.
+```{r}
+fitted_val_expo_uk_80 <- tibble(
+  country  = country_name,
+  index    = seq_len(horizon_pred) - 1,
+  value    = obs,
+  type_obs = type_obs,
+  date     = dates
+) |> 
+  mutate(
+    model_type   = "Exponential",
+    fitted_value = model_function(theta = params$coef_estimate, x = index)
+  )
+fitted_val_expo_uk_80
+```
+We can plot those values:
+```{r}
+#| fig-cap: Number of cases, Exponential model, out-of-sample predictions
+#| label: fig-nb-cases-fit-expo-oos
+ggplot(
+  data = fitted_val_expo_uk_80 |> 
+    pivot_longer(cols = c(value, fitted_value)),
+  mapping = aes(x = date, y = value, linetype = name, colour = type_obs)) +
+  geom_line() +
+  labs(x = NULL, y = "Cases") +
+  scale_y_continuous(labels = comma) +
+  scale_linetype_discrete(
+    NULL, 
+    labels = c("value" = "Observed values",
+               "fitted_value" = "Fitted values")) +
+  scale_colour_manual(
+    NULL,
+    values = c(
+      "obs" = "#44AA99",
+      "out_of_sample" = "#AA4499"
+    ),
+    labels = c(
+      "obs" = "Observed",
+      "out_of_sample" = "Out-of-sample"
+    )
+  ) +
+  theme(
+    legend.position = "bottom",
+    plot.title.position = "plot"
+  )
+
+```
+
+
+
+
+### Generalized exponential model
+
+Now let us turn to the generalized exponential model.
+
+
+```{r}
+model_function <- gen_exponential_f
+```
+
+
+Again, we rely on the `nls.lm()`{.R} function from package {minpack.lm}.
+
+Here are some starting values for the optimization algorithm:
+```{r}
+# The starting values
+start <- list(
+  A = 1,
+  r  = .14,
+  alpha = .99
+)
+```
+
+We need to change the prediction function that will be passed on to the `loss_function()`{.R} that will be minimized:
+
+
+The `nls.lm()`{.R} function can then be used. 
+
+```{r}
+# The estimated coefficients
+out <- nls.lm(
+  par = start, 
+  fn = loss_function,
+  y = df_country$y,
+  t = df_country$t,
+  fun = model_function,
+  control = nls.lm.control(maxiter = 100),
+  jac = NULL,
+  lower = NULL,
+  upper = NULL
+)
+```
+
+The results can be summarized as follows:
+
+```{r}
+summary(out)
+```
+
+The estimated coefficients can be extracted and saved in a tibble:
+```{r}
+params <- tibble(
+  model_type = "Gen_Exponential",
+  country = country_name,
+  coef_estimate_name = names(coef(out)),
+  coef_estimate = coef(out)
+)
+params
+```
+The goodness of fit criterion can be computed using the `get_criteria()`{.R} function previously defined.
+```{r}
+crit <- get_criteria(
+  f = model_function,
+  data = df_country,
+  theta = params$coef_estimate
+)
+crit
+```
+
+And they can be stored in a tibble:
+```{r}
+criteria <- tibble(
+  model_type = "Gen_Exponential",
+  country = country_name,
+  bind_rows(crit)
+)
+criteria
+```
+
+The $\mathcal{R}_0$ can be estimated with the `sim_ec()`{.R} function. But the generalized exponential does not provide good estimates for the reproduction number.
+
+
+```{r}
+R0_i <- sim_ec(
+  out = out,
+  n_repl = 1000,
+  ti = h,
+  h = h,
+  model_name = "Gen_Exponential"
+)
+R0_i
+```
+
+They can also be saved in a tibble:
+
+```{r}
+R0_df <- tibble(
+  model_type = "Gen_Exponential",
+  country = country_name,
+  bind_rows(R0_i)
+)
+R0_df
+```
+
+We can compute the predicted values and store those in a tibble:
+
+```{r}
+fitted_val_genexpo_uk <- 
+  df_country |> 
+  mutate(index = row_number()-1) |> 
+  mutate(
+    model_type   = "Gen_Exponential",
+    fitted_value = model_function(theta = params$coef_estimate, x = index)
+  )
+fitted_val_genexpo_uk
+```
+
+```{r}
+#| fig-cap: Number of cases, Generalized Exponential Model
+#| label: fig-nb-cases-fit-genexpo
+ggplot(
+  data = fitted_val_genexpo_uk |> 
+    select(date, value, fitted_value) |> 
+    pivot_longer(cols = c(value, fitted_value)) |> 
+    mutate(name = factor(name, levels = c("value", "fitted_value"))),
+  mapping = aes(x = date, y = value, linetype = name)) +
+  geom_line() +
+  labs(x = NULL, y = "Cases") +
+  scale_y_continuous(labels = comma) +
+  scale_linetype_discrete(
+    NULL,
+    labels = c("fitted_value" = "Fitted values",
+               "value" = "Observed values")
+  ) +
+  theme(
+    legend.position = "bottom",
+    plot.title.position = "plot"
+  )
+```
+
+We can compute the predicted values up to a given horizon. Let us assume that we want to make predictions up to the 80th day.
+```{r}
+horizon_pred <- 80
+obs <- df_country$y
+
+type_obs <- rep("obs", length(obs))
+if (length(obs) < horizon_pred) {
+  obs <- c(obs, rep(NA, horizon_pred-length(obs)))
+  type_obs <- c(
+    type_obs,
+    rep("out_of_sample", horizon_pred-length(type_obs))
+  )
+}
+
+length(obs)
+table(type_obs)
+```
+
+Let us keep track on the corresponding dates.
+```{r}
+dates <- df_country$date
+if (length(dates) < horizon_pred) {
+  dates <- dates[1] + lubridate::ddays(seq_len(horizon_pred) - 1)
+}
+tail(dates)
+```
+
+The predictions can be made, using the estimated parameters, and stored in a tibble.
+```{r}
+fitted_val_genexpo_uk_80 <- tibble(
+  country  = country_name,
+  index    = seq_len(horizon_pred) - 1,
+  value    = obs,
+  type_obs = type_obs,
+  date     = dates
+) |> 
+  mutate(
+    model_type   = "Gen_Exponential",
+    fitted_value = model_function(theta = params$coef_estimate, x = index)
+  )
+fitted_val_genexpo_uk_80
+```
+We can plot those values:
+```{r}
+#| fig-cap: Number of cases, Generalized Exponential model, out-of-sample predictions
+#| label: fig-nb-cases-fit-genexpo-oos
+ggplot(
+  data = fitted_val_genexpo_uk_80 |> 
+    pivot_longer(cols = c(value, fitted_value)),
+  mapping = aes(x = date, y = value, linetype = name, colour = type_obs)) +
+  geom_line() +
+  labs(x = NULL, y = "Cases") +
+  scale_y_continuous(labels = comma) +
+  scale_linetype_discrete(
+    NULL, 
+    labels = c("value" = "Observed values",
+               "fitted_value" = "Fitted values")) +
+  scale_colour_manual(
+    NULL,
+    values = c(
+      "obs" = "#44AA99",
+      "out_of_sample" = "#AA4499"
+    ),
+    labels = c(
+      "obs" = "Observed",
+      "out_of_sample" = "Out-of-sample"
+    )
+  ) +
+  theme(
+    legend.position = "bottom",
+    plot.title.position = "plot"
+  )
+```
+
+

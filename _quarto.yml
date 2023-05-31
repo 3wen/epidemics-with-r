@@ -1,0 +1,74 @@
+project:
+  type: book
+
+book:
+  title: "Modelling epidemics with R"
+  repo-url: https://github.com/3wen/epidemics-with-r
+  author:
+    - name: Ewen Gallic
+      orcid: 0000-0003-3740-2620
+      affiliations: Aix Marseille School of Economics, Aix Marseille Univ.
+    - name: Michel Lubrano
+      orcid: 0000-0003-0448-0307
+      affiliations:
+        - Aix Marseille School of Economics, Aix Marseille Univ.
+        - School of Economics, Jiangxi University of Finance and Economics, Nanchang, Jiangxi, China
+    - name: Pierre Michel
+      orcid: 0000-0002-6442-2566
+      email: pierre.michel@univ-amu.fr
+      affiliations: Aix Marseille School of Economics, Aix Marseille Univ.
+  date: "2023-05-31"
+  cover-image: figs/cover.png
+  chapters:
+    - index.qmd
+    - part: SIR Model
+      chapters:
+      - SIR-background.qmd
+      - SIR-simulations.qmd
+      - SIR-animations.qmd
+    - part: Statistical Models
+      chapters:
+      - covid-data.qmd
+      - reproduction-number.qmd
+      - phenomeological-background.qmd
+      - phenomenological-models.qmd
+    - references.qmd
+
+bibliography: references.bib
+
+format:
+  html:
+    theme: default
+    html-math-method: mathjax
+    include-in-header:
+    - file: mathjax-color.html
+  pdf:
+    documentclass: scrreprt
+    include-in-header:
+    - text: |
+        \usepackage{dsfont}
+        \usepackage{xcolor}
+        \usepackage{mathtools}
+        \definecolor{bayesred}{RGB}{147, 30, 24}
+        \definecolor{bayesblue}{RGB}{32, 35, 91}
+        \definecolor{bayesorange}{RGB}{218, 120, 1}
+        \definecolor{grey}{RGB}{128, 128, 128}
+        \definecolor{couleur1}{RGB}{0,163,137}
+        \definecolor{couleur2}{RGB}{255,124,0}
+        \definecolor{couleur3}{RGB}{0, 110, 158}
+        \definecolor{coul1}{RGB}{255,37,0}
+        \definecolor{coul2}{RGB}{242,173,0}
+        \definecolor{col_neg}{RGB}{155, 191, 221}
+        \definecolor{col_pos}{RGB}{255, 128, 106}
+        \definecolor{wongBlack}{RGB}{0,0,0}
+        \definecolor{wongLightBlue}{RGB}{86, 180, 233}
+        \definecolor{wongGold}{RGB}{230, 159, 0}
+        \definecolor{wongGreen}{RGB}{0, 158, 115}
+        \definecolor{wongYellow}{RGB}{240, 228, 66}
+        \definecolor{wongBlue}{RGB}{0, 114, 178}
+        \definecolor{wongOrange}{RGB}{213, 94, 0}
+        \definecolor{wongPurple}{RGB}{204, 121, 167}
+        \definecolor{IBMPurple}{RGB}{120, 94, 240}
+        \definecolor{IBMMagenta}{RGB}{220, 38, 127}
+
+editor: source

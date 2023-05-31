@@ -1,0 +1,891 @@
+# Covid-19 Data {#sec-covid-data}
+
+This chapter provides codes that can be used to work with the data from Oxford University: [Oxford Covid-19 Government Response Tracker (OxCGRT)](https://github.com/OxCGRT/covid-policy-tracker/).
+
+Here, we will focus on 5 large and 5 small European countries, in terms of inhabitants:
+- "Large countries": United Kingdom, Spain, Italy, Germany, France,
+- "Small countries": Sweden, Belgium, Netherlands, Ireland, Denmark.
+
+
+## Load data
+
+First of all, let us load some packages.
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(knitr)
+library(kableExtra)
+library(RColorBrewer)
+library(growthmodels)
+library(minpack.lm)
+library(scales)
+library(nlstools)
+library(ggpubr)
+library(gridExtra)
+```
+
+
+Let us also define a theme for the graphical outputs, as in [Chapter -@sec-sir-model]
+```{r}
+library(grid)
+theme_paper <- function(..., size_text = 8)
+  theme(text = element_text(size = size_text),
+        plot.background = element_rect(fill="transparent", color=NA),
+        panel.background = element_rect(fill = "transparent", color=NA),
+        panel.border = element_blank(),
+        axis.text = element_text(), 
+        legend.text = element_text(size = rel(1.1)),
+        legend.title = element_text(size = rel(1.1)),
+        legend.background = element_rect(fill="transparent", color=NULL),
+        legend.position = "bottom", 
+        legend.direction = "horizontal", legend.box = "vertical",
+        legend.key = element_blank(),
+        panel.spacing = unit(1, "lines"),
+        panel.grid.major = element_line(colour = "grey90"), 
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(hjust = 0, size = rel(1.3), face = "bold"),
+        plot.title.position = "plot",
+        plot.margin = unit(c(1, 1, 1, 1), "lines"),
+        strip.background = element_rect(fill=NA, colour = NA),
+        strip.text = element_text(size = rel(1.1)))
+```
+
+
+Let us modify the locale settings. This depends on the OS. For Windows users:
+
+```{r, eval=FALSE}
+Sys.setlocale("LC_ALL", "English_United States")
+```
+
+For Unix users:
+```{r}
+# Only for Unix users
+Sys.setlocale("LC_ALL", "en_US.UTF-8")
+```
+
+### Confirmed and Deaths data {.tabset}
+
+As mentioned at the beginning of the notebook, we rely on [Oxford Covid-19 Government Response Tracker (OxCGRT)](https://github.com/OxCGRT/covid-policy-tracker/) data.
+
+Let us define the vector of country names:
+```{r}
+names_countries <- c("United Kingdom", "Spain", "Italy", "Germany", "France", 
+                     "Sweden", "Belgium", "Netherlands", "Ireland", "Denmark")
+names_countries_large <- c("United Kingdom", "Spain", "Italy", "Germany", "France")
+names_countries_small <- c("Sweden", "Belgium", "Netherlands", "Ireland", "Denmark")
+
+```
+
+
+The raw data can be downloaded as follows:
+```{r, eval=FALSE}
+df_oxford <- 
+  read.csv("https://raw.githubusercontent.com/OxCGRT/covid-policy-tracker/master/data/OxCGRT_nat_latest.csv")
+```
+
+Then we save those:
+```{r, eval=FALSE}
+dir.create("data")
+save(df_oxford, file = "data/df_oxford.rda")
+```
+
+Let us load the saved data (data saved on May 29, 2023):
+```{r, echo=FALSE}
+load("data/df_oxford.rda")
+```
+
+The dimensions are the following:
+```{r}
+dim(df_oxford)
+```
+
+Let us focus first on the number of confirmed cases:
+
+```{r}
+confirmed_df <- 
+  df_oxford |> 
+  select(
+    country = CountryName, 
+    country_code = CountryCode,
+    date = Date,
+    value = ConfirmedCases,
+    stringency_index = StringencyIndex_Average) |> 
+  filter(country %in% names_countries) |> 
+  as_tibble() |> 
+  mutate(
+    date = ymd(date),
+    days_since_2020_01_22 =
+      lubridate::interval(
+        lubridate::ymd("2020-01-22"), date) / lubridate::ddays(1)
+  )
+```
+
+We can do the same for the number of deaths:
+```{r}
+deaths_df <- 
+  df_oxford |> 
+  select(country = CountryName, 
+         country_code = CountryCode,
+         date = Date,
+         value = ConfirmedDeaths, 
+         stringency_index = StringencyIndex_Average) |> 
+  filter(country %in% names_countries) |> 
+  as_tibble() |> 
+  mutate(
+    date = ymd(date),
+    days_since_2020_01_22 =
+      lubridate::interval(
+        lubridate::ymd("2020-01-22"), date) / lubridate::ddays(1)
+  )
+```
+
+
+#### Confirmed extract
+
+Here is an extract from the last 3 rows of the confirmed cases:
+
+```{r}
+#| tbl-cap: Last 3 rows of confirmed cases, by country
+#| label: tbl-top-3-rows-confirmed
+confirmed_df |> 
+  group_by(country) |> 
+  slice_tail(n = 3) |> 
+  arrange(country, desc(date)) |> 
+  kable()
+```
+
+The number of observation per country:
+```{r}
+confirmed_df |> group_by(country) |> count()
+```
+
+
+
+#### Deaths extract
+
+Here is an extract from the last 3 rows of the number of deaths, for each country:
+
+```{r}
+#| tbl-cap: Last 3 rows of deaths, by country
+#| label: tbl-top-3-rows-deaths
+deaths_df |> 
+  group_by(country) |> 
+  slice_tail(n = 3) |> 
+  arrange(country, desc(date)) |> 
+  kable()
+```
+The number of observation per country:
+```{r}
+deaths_df |> group_by(country) |> count()
+```
+
+
+Let us keep in a table the correspondence between the country name and its ISO 3166-1 alpha-3 code:
+```{r}
+country_codes <-
+  confirmed_df |>
+  select(country, country_code) |>
+  unique()
+country_codes
+```
+
+### Population
+
+Let us define rough values for the population of each country:
+
+```{r}
+population <- 
+  tribble(
+    ~country, ~pop,
+    "France", 70e6,
+    "Germany", 83e6,
+    "Italy", 61e6,
+    "Spain", 47e6,
+    "United Kingdom", 67e6,
+    "Belgium", 12e6,
+    "Denmark", 6e6,
+    "Ireland", 5e6,
+    "Netherlands", 18e6,
+    "Sweden", 11e6
+  )
+```
+
+### Filtering data
+
+
+In this notebook, let us use data up to September 30th, 2020. Let us keep only those data and extend the date up to November 3rd, 2020 (to assess the goodness of fit of the models with unseen data).
+
+```{r}
+end_date_sample <- lubridate::ymd("2020-09-30")
+end_date_data <- lubridate::ymd("2020-10-31")
+confirmed_df <- confirmed_df |> filter(date <= end_date_data)
+deaths_df <- deaths_df |> filter(date <= end_date_data)
+```
+
+### Defining start and end dates for a "first wave"
+
+We create a table that gives some dates for each country, adopting the following convention:
+
+- `start_first_wave`: start of the first wave, defined as the first date when the cumulative number of cases is greater than 1
+- `start_high_stringency`: date at which the stringency index reaches its maximum value during the first 100 days of the sample
+- `start_reduce_restrict`: moment at which the restrictions of the first wave starts to lower
+- `start_date_sample_second_wave`: 60 days after the relaxation of restrictions (60 days after after `start_reduce_restrict`)
+- `length_high_stringency`: number of days between `start_high_stringency` and ` `start_reduce_restrict`.
+
+```{r}
+# Start of the outbreak
+start_first_wave <- 
+  confirmed_df |> 
+  group_by(country) |> 
+  arrange(date) |> 
+  filter(value > 0) |> 
+  slice(1) |> 
+  select(country, start_first_wave = date)
+```
+The start of period with highest severity index among the first 100 days:
+
+```{r}
+start_high_stringency <- 
+  confirmed_df |> 
+  group_by(country) |> 
+  slice(1:100) |>
+  arrange(desc(stringency_index), date) |> 
+  slice(1) |> 
+  select(country, start_high_stringency = date)
+```
+The moment at which the restrictions of the first wave starts to lower:
+
+```{r}
+start_reduce_restrict <- 
+  confirmed_df |> 
+  group_by(country) |> 
+  arrange(date) |> 
+  left_join(start_high_stringency, by = "country") |> 
+  filter(date >= start_high_stringency) |> 
+  mutate(tmp = dplyr::lag(stringency_index)) |> 
+  mutate(same_strin = stringency_index == tmp) |> 
+  mutate(same_strin = ifelse(row_number()==1, TRUE, same_strin)) |> 
+  filter(same_strin == FALSE) |> 
+  slice(1) |>
+  select(country, start_reduce_restrict = date)
+```
+The assumed start of the second wave:
+
+```{r}
+start_date_sample_second_wave <-
+  start_reduce_restrict |> 
+  mutate(
+    start_date_sample_second_wave = start_reduce_restrict + 
+      lubridate::ddays(60)
+  ) |>
+  select(country, start_date_sample_second_wave)
+```
+Then, we can put all these dates into a single table:
+
+```{r}
+stringency_dates <- 
+  start_first_wave |> 
+  left_join(start_high_stringency, by = "country") |> 
+  left_join(start_reduce_restrict, by = "country") |> 
+  left_join(start_date_sample_second_wave, by = "country")
+```
+
+
+
+## Individual Data
+
+
+@Li-etal2020 estimated the distribution of the incubation period by fitting a lognormal distribution on exposure histories, leading to an estimated mean of 5.2 days, a 0.95 confidence interval of [4.1,7.0] and the 95th percentile of 12.5 days.
+
+This corresponds to a lognormal density with parameters $\mu = 1.43$ and $\sigma = 0.67$:
+
+```{r}
+func <- function(x){
+  # For finding gamma parameters of the serial interval distribution Li etal 2020
+  a = x[1]
+  s = x[2]
+  (7.5-a*s)^2+(3.4-sqrt(a)*s)^2
+}
+x = c(4,2)
+optim(x,func)
+```
+
+The mean serial interval is defined as the time between the onset of symptoms in a primary case and the onset of symptoms in secondary cases. @Li-etal2020 fitted a gamma distribution to data from cluster investigations. They found a mean time of 7.5 days (SD = 3.4) with a 95% confidence interval of [5.3,19].
+
+The corresponding parameters for the Gamma distribution can be obtained as follows:
+
+```{r}
+mean_si <- 7.5
+std_si <- 3.4
+
+shape <- (mean_si / std_si)^2
+scale <- mean_si / shape
+str_c("Shape = ", shape, ", Scale = ", scale)
+```
+
+The quantile of order .999 for such parameters is equal to:
+
+```{r}
+h <- ceiling(qgamma(p = .99, shape = shape, scale = scale))
+h
+```
+
+
+
+## Descriptive statistics
+
+Let us assign a colour to each country within each group (large or small countries)
+
+```{r}
+colours_lugami <- rep(
+  c("#1F78B4", "#33A02C", "#E31A1C", "#FF7F00", "#6A3D9A"), 2)
+colours_lugami_names <- colours_lugami
+names(colours_lugami_names) <- names_countries
+colour_table <- 
+  tibble(
+    colour = colours_lugami_names,
+    country = names(colours_lugami_names)) |> 
+  left_join(country_codes, by = c("country"))
+colour_table
+```
+
+Keep also a track of that in a vector (useful for graphs with {ggplot2}):
+```{r}
+colour_countries <- colour_table$colour
+names(colour_countries) <- colour_table$country_code
+colour_countries
+```
+
+
+Let us create two figures that shows the evolution of the cumulative number of cases through time and the cumulative number of deaths through time, respectively.
+
+To that end, we need to reshape the data. First, we need a table in which each row gives the value to be plotted for a given date, a given country and a given type of variable (confirmed cases or recovered).
+
+
+```{r}
+df_plot_evolution_numbers <- 
+  confirmed_df |> 
+  mutate(type = "Cases") |> 
+  bind_rows(
+    deaths_df |> 
+      mutate(type = "Deaths")
+  ) |> 
+  mutate(type = factor(type, levels = c("Cases", "Deaths", "Recovered")))
+df_plot_evolution_numbers
+```
+
+From this table, we can only keep cases and deaths cumulative values, filter the observation to keep only those after January 21, 2020. Let us also add for each line, whether the country it corresponds to is small or large (we will create two panels in the graphs). We can also add the country code.
+
+```{r}
+df_plot_evolution_numbers_dates <- 
+  df_plot_evolution_numbers |> 
+  filter(type %in% c("Cases", "Deaths")) |> 
+  filter(date >= ymd("2020-01-21")) |> 
+  mutate(
+    country_type = ifelse(country %in% names_countries_large, yes = "L", "S"),
+    country_type = factor(
+      country_type, 
+      levels = c("L", "S"),
+      labels = c("Larger countries", "Smaller countries")
+    )
+  ) |> 
+  left_join(country_codes, by = c("country", "country_code"))
+df_plot_evolution_numbers_dates
+```
+
+
+We want the labels of the legends for the countries to be ordered in a specific way. To that end, let us create two variables that specify this order:
+```{r}
+order_countries_L <- c("GBR", "ESP", "ITA", "DEU", "FRA")
+order_countries_S <- c("SWE", "BEL", "NLD", "IRL", "DNK")
+```
+
+
+
+### Confirmed cases
+
+
+Let us focus on the confirmed cases here. We can create two tables: one for the large countries, and another one for small ones:
+
+```{r}
+df_plot_evolution_numbers_dates_L <- 
+  df_plot_evolution_numbers_dates |> 
+  filter(country_type == "Larger countries") |> 
+  filter(type == "Cases")
+```
+
+And for small countries:
+
+```{r}
+df_plot_evolution_numbers_dates_S <- 
+  df_plot_evolution_numbers_dates |> 
+  filter(country_type == "Smaller countries") |> 
+  filter(type == "Cases")
+```
+
+As we would like the graphs to display the day at which the stringency index reaches its max value for the first time, we need to extract the cumulative number of cases at the corresponding dates.
+
+```{r}
+df_lockdown_plot <- 
+  stringency_dates |> 
+  rename(date = start_first_wave) |> 
+  left_join(
+    df_plot_evolution_numbers_dates |> 
+      filter(type == "Cases"),
+    by = c("country", "date")
+  )
+df_lockdown_plot
+```
+
+The two plots can be created:
+```{r}
+plot_evolution_numbers_dates_L <- 
+  ggplot(
+    data = df_plot_evolution_numbers_dates_L |> 
+      mutate(
+        country_code = factor(country_code, levels = order_countries_L)
+      ),
+    mapping = aes(x = date, y = value, colour = country_code)
+  ) +
+  geom_line(linewidth = 1.1) +
+  geom_point(
+    data = df_lockdown_plot |>
+      filter(
+        country %in% unique(df_plot_evolution_numbers_dates_L$country)
+      ),
+    colour = "black", size = 4
+  ) +
+  geom_point(
+    data = df_lockdown_plot |> 
+      filter(country %in% unique(df_plot_evolution_numbers_dates_L$country)),
+    mapping = aes(colour = country_code), size = 3, show.legend = F
+  ) +
+  scale_shape_discrete("Lockdown") +
+  scale_fill_manual(NULL, values = colour_countries, guide = "none") +
+  scale_colour_manual(NULL, values = colour_countries) +
+  labs(x = NULL, y = NULL) +
+  scale_y_continuous(labels = comma) +
+  scale_x_date(
+    breaks = ymd(pretty_dates(df_plot_evolution_numbers_dates$date, n = 5)), 
+    date_labels = "%b %d %Y"
+  ) +
+  theme_paper() +
+  guides(colour = guide_legend(nrow = 2, byrow = TRUE))
+```
+
+and for small countries:
+```{r}
+plot_evolution_numbers_dates_S <- 
+  ggplot(
+    data = df_plot_evolution_numbers_dates_S |> 
+           mutate(
+             country_code = factor(country_code, levels = order_countries_S)
+             ),
+    mapping = aes(x = date, y = value, colour = country_code)
+    ) +
+  geom_line(linewidth = 1.1) +
+  geom_point(
+    data = df_lockdown_plot |>
+      filter(country %in% unique(df_plot_evolution_numbers_dates_S$country)),
+    colour = "black", size = 4
+  ) +
+  geom_point(
+    data = df_lockdown_plot |> 
+      filter(country %in% unique(df_plot_evolution_numbers_dates_S$country)),
+    mapping = aes(colour = country_code), size = 3, show.legend = F
+  ) +
+  scale_shape_discrete("Lock-down") +
+  scale_fill_manual(NULL, values = colour_countries, guide = "none") +
+  scale_colour_manual(NULL, values = colour_countries) +
+  labs(x = NULL, y = NULL) +
+  scale_y_continuous(labels = comma) +
+  scale_x_date(
+    breaks = ymd(pretty_dates(df_plot_evolution_numbers_dates$date, n = 5)), 
+    date_labels = "%b %d %Y") +
+  theme_paper() +
+  guides(colour = guide_legend(nrow = 2, byrow = TRUE))
+```
+
+
+These two plots can be put together on a single one:
+```{r}
+#| fig-cap: Confirmed cases between the beginning of the Covid-19 epidemics and November 2020.
+#| label: fig-desc-cases-countries
+p <-
+  arrangeGrob(
+    # Row 1
+    plot_evolution_numbers_dates_L + 
+      labs(y = NULL, title = "(a) Confirmed case, large countries"),
+    plot_evolution_numbers_dates_S + 
+      labs(y = NULL, title = "(b) Confirmed cases, small countries."),
+    nrow = 1
+  ) |> 
+  as_ggplot()
+p
+```
+
+
+### Deaths
+
+Let us focus on the number of deaths here. We can create two tables: one for the large countries, and another one for small ones:
+
+```{r}
+df_plot_evolution_numbers_dates_L <- 
+  df_plot_evolution_numbers_dates |> 
+  filter(country_type == "Larger countries") |> 
+  filter(type == "Deaths")
+```
+
+And for small countries:
+
+```{r}
+df_plot_evolution_numbers_dates_S <- 
+  df_plot_evolution_numbers_dates |> 
+  filter(country_type == "Smaller countries") |> 
+  filter(type == "Deaths")
+```
+
+As we would like the graphs to display the day at which the stringency index becomes greater or equal to 60 for the first time, we need to extract the cumulative number of cases at the corresponding dates.
+
+```{r}
+df_lockdown_plot <- 
+  stringency_dates |> 
+  rename(date = start_first_wave) |> 
+  left_join(
+    df_plot_evolution_numbers_dates |> 
+      filter(type == "Deaths"),
+    by = c("country", "date")
+  )
+df_lockdown_plot
+```
+
+The two plots can be created:
+```{r}
+plot_evolution_numbers_dates_L <- 
+  ggplot(
+    data = df_plot_evolution_numbers_dates_L |> 
+      mutate(
+        country_code = factor(country_code, levels = order_countries_L)
+      ),
+    mapping = aes(x = date, y = value, colour = country_code)
+  ) +
+  geom_line(linewidth = 1.1) +
+  geom_point(
+    data = df_lockdown_plot |>
+      filter(country %in% unique(df_plot_evolution_numbers_dates_L$country)),
+    colour = "black", size = 4
+  ) +
+  geom_point(
+    data = df_lockdown_plot |> 
+      filter(country %in% unique(df_plot_evolution_numbers_dates_L$country)),
+    mapping = aes(colour = country_code), size = 3, show.legend = F) +
+  labs(x = NULL, y = NULL) +
+  scale_colour_manual(NULL, values = colour_countries) +
+  scale_y_continuous(labels = comma) +
+  scale_x_date(
+    breaks = ymd(pretty_dates(df_plot_evolution_numbers_dates$date, n = 5)), 
+    date_labels = "%b %d %Y") +
+  theme_paper() +
+  guides(colour = guide_legend(nrow = 2, byrow = TRUE))
+```
+
+and for small countries:
+```{r}
+plot_evolution_numbers_dates_S <- 
+  ggplot(
+    data = df_plot_evolution_numbers_dates_S |> 
+      mutate(country_code = factor(country_code, levels = order_countries_S)),
+    mapping = aes(x = date, y = value, colour = country_code)
+  ) +
+  geom_line(linewidth = 1.1) +
+  geom_point(
+    data = df_lockdown_plot |>
+      filter(country %in% unique(df_plot_evolution_numbers_dates_S$country)),
+    colour = "black", size = 4) +
+  geom_point(
+    data = df_lockdown_plot |> 
+      filter(country %in% unique(df_plot_evolution_numbers_dates_S$country)),
+    mapping = aes(colour = country_code), size = 3, show.legend = F
+  ) +
+  scale_shape_discrete("Lock-down") +
+  scale_fill_manual(NULL, values = colour_countries, guide = "none") +
+  scale_colour_manual(NULL, values = colour_countries) +
+  labs(x = NULL, y = NULL) +
+  scale_y_continuous(labels = comma) +
+  scale_x_date(
+    breaks = ymd(pretty_dates(df_plot_evolution_numbers_dates$date, n = 5)), 
+    date_labels = "%b %d %Y"
+  ) +
+  theme_paper() +
+  guides(colour = guide_legend(nrow = 2, byrow = TRUE))
+```
+
+
+These two plots can be put together on a single one:
+```{r}
+#| fig-cap: Confirmed deaths between the beginning of the Covid-19 epidemics and November 2020.
+#| label: fig-desc-deaths-countries
+p <-
+  arrangeGrob(
+    # Row 1
+    plot_evolution_numbers_dates_L + 
+      labs(y = NULL, title = "(a) Confirmed deaths, large countries"),
+    plot_evolution_numbers_dates_S + 
+      labs(y = NULL, title = "(b) Confirmed deaths, small countries."),
+    nrow = 1
+    ) |> 
+  as_ggplot()
+p
+```
+
+
+### Stringency Index
+
+
+Let us create a similar plot for the stringency index.
+
+```{r}
+df_plot_stringency_index <- 
+  confirmed_df |> 
+  select(country, country_code, date, stringency_index) |> 
+  mutate(
+    country_type = ifelse(
+      country %in% c("France", "Germany", "Italy",
+                     "Spain", "United Kingdom"),
+      yes = "L", "S")
+  ) %>%
+  mutate(
+    country_type = factor(
+      country_type, levels = c("L", "S"),
+      labels = c("Larger countries", "Smaller countries")
+    )
+  )
+```
+
+Then we can create the plot for large countries:
+
+```{r}
+plot_stringency_index_L <- 
+  ggplot(
+    data = df_plot_stringency_index |> 
+      filter(country_type == "Larger countries") |> 
+      mutate(country_code = fct_relevel(country_code, order_countries_L)),
+    mapping =  aes(x = date, y = stringency_index, colour = country_code)
+  ) +
+  geom_line(linewidth = 1.1) +
+  geom_hline(yintercept = 70, linetype = "dotted") +
+  labs(x = NULL, y = NULL) +
+  scale_colour_manual(NULL, values = colour_countries) +
+  scale_y_continuous(breaks = seq(0, 100, by = 20)) +
+  scale_x_date(
+    breaks = ymd(pretty_dates(df_plot_stringency_index$date, n = 7)), 
+    date_labels = "%b %d %Y"
+  ) +
+  theme_paper() +
+  guides(colour = guide_legend(nrow = 2, byrow = TRUE))
+```
+
+And for small countries:
+```{r}
+plot_stringency_index_S <- 
+  ggplot(
+    data = df_plot_stringency_index |> 
+      filter(country_type == "Smaller countries") |> 
+      mutate(country_code = fct_relevel(country_code, order_countries_S)),
+    mapping= aes(x = date, y = stringency_index, colour = country_code)
+  ) +
+  geom_line(linewidth = 1.1) +
+  geom_hline(yintercept = 70, linetype = "dotted") +
+  labs(x = NULL, y = NULL) +
+  scale_colour_manual(NULL, values = colour_countries) +
+  scale_y_continuous(breaks = seq(0, 100, by = 20)) +
+  scale_x_date(
+    breaks = ymd(pretty_dates(df_plot_stringency_index$date, n = 7)), 
+    date_labels = "%b %d %Y") +
+  theme_paper() +
+  guides(colour = guide_legend(nrow = 2, byrow = TRUE))
+```
+
+
+Lastly, we can plot these two graphs on a single figure:
+```{r}
+#| fig-cap: Severity index between the beginning of the Covid-19 epidemics and November 2020.
+#| label: fig-desc-index-countries
+p <-
+  arrangeGrob(
+    # Row 1
+    plot_stringency_index_L + 
+      labs(y = NULL, title = "(a) Severity index, large countries"),
+    plot_stringency_index_S + 
+      labs(y = NULL, title = "(b) Severity index, small countries"),
+    nrow = 1
+  ) |> 
+  as_ggplot()
+p
+```
+
+### Speed of reaction to the epidemic outbreak
+
+The observation of a first case was the sign that the epidemic had reached the country. What was the delay between this first case and a significant reaction identified when the index was greater than 20?
+
+We can first extract the date on which the severity index reaches the value of 20 for the first time as follows:
+
+```{r}
+start_stringency_20 <- 
+  confirmed_df |>
+  filter(stringency_index >= 20) |>
+  group_by(country) |>
+  slice(1) |>
+  select(country, date_stringency_20 = date, cases = value) |> 
+  ungroup()
+```
+
+Then, we can get the date of the first case for each country:
+
+```{r}
+start_first_case <- 
+  df_plot_evolution_numbers_dates |> 
+  filter(type == "Cases") |> 
+  group_by(country) |> 
+  filter(value > 0) |> 
+  arrange(date) |> 
+  slice(1) |> 
+  select(country, first_case = date) |> 
+  ungroup()
+```
+
+
+```{r}
+#| tbl-cap: Speed of reaction to the epidemic outbreak
+#| label: tbl-speed-reaction-to-outbreak
+start_stringency_20 |> 
+  left_join(start_first_case) |> 
+  mutate(interval = lubridate::interval(first_case, date_stringency_20),
+         delay = interval / lubridate::ddays(1)) |> 
+  mutate(country = fct_relevel(country, names_countries)) |> 
+  arrange(country) |> 
+  select(country, first_case, delay, cases) |>
+  kableExtra::kable()
+```
+
+### Confinement and deconfinement policies
+
+
+Let us check how the different countries proceeded with deconfinement.
+
+The date at which the stringency index reached its maximum value within the first 100 days since the end of January:
+```{r}
+start_max_stringency <- 
+  confirmed_df |> 
+  group_by(country) |> 
+  slice(1:100) |>
+  arrange(desc(stringency_index), date) |> 
+  slice(1) |> 
+  select(country, start = date)
+start_max_stringency
+```
+
+We can easily obtain the date on which the index begins to fall from its maximum value, corresponding to a relaxation of policy measures (_i.e._, end of lockdown):
+
+```{r}
+policies <- 
+  confirmed_df |> 
+  select(country, date, stringency_index) |> 
+  left_join(start_max_stringency, by = c("country")) |> 
+  group_by(country) |> 
+  arrange(date) |> 
+  filter(date >= start) |> 
+  mutate(tmp = dplyr::lag(stringency_index)) |>
+  mutate(same_strin = stringency_index == tmp) |>
+  mutate(same_strin = ifelse(row_number()==1, TRUE, same_strin)) |>
+  filter(same_strin == FALSE) |>
+  slice(1) |> 
+  mutate(length = lubridate::interval(start, date) / ddays(1)) |> 
+  select(country, start, end=date, length)
+policies
+```
+
+The average of the strigency index between the max value and the end of containment can be obtained as follows:
+```{r}
+strength_containment <- 
+  confirmed_df |> 
+  select(country, date, stringency_index) |> 
+  left_join(policies, by = "country") |> 
+  filter(date >= start, date < end) |> 
+  group_by(country) |> 
+  summarise(strength = mean(stringency_index))
+strength_containment
+```
+
+We can count how many smoothing and how many restrengthening actions were made till the end of our sample:
+
+```{r}
+policy_changes <- 
+  confirmed_df |> 
+  select(country, date, stringency_index) |> 
+  left_join(policies, by = "country") |> 
+  filter(date >=  end, date <= end_date_sample) |> 
+  group_by(country) |> 
+  mutate(tmp = dplyr::lag(stringency_index)) |> 
+  mutate(tmp = ifelse(row_number()==1, stringency_index, tmp)) |> 
+  mutate(same_strin = stringency_index == tmp) |>
+  mutate(
+    smoothing = ifelse(!same_strin & stringency_index < tmp, TRUE, FALSE),
+    restrenghtening = ifelse(
+      !same_strin & stringency_index > tmp, TRUE, FALSE)
+  ) |> 
+  summarise(
+    changes_smo = sum(smoothing),
+    changes_res = sum(restrenghtening)
+  )
+policy_changes
+```
+
+
+Lastly, we can gather all this information in a single table:
+
+```{r}
+#| fig-cap: Overview of the smoothing and restrenghthening actions during between the beginning of the Codiv-19 epidemic and November 2020.
+#| label: tbl-overview-policy
+policies |> 
+  left_join(strength_containment, by = "country") |> 
+  left_join(policy_changes, by = "country") |> 
+  mutate(country = factor(country)) |> 
+  mutate(country = fct_relevel(country, names_countries)) |> 
+  arrange(country) |> 
+  mutate(
+    start = format(start, "%B %d"),
+    end = format(end, "%B %d")
+  ) |> 
+  kableExtra::kable()
+```
+
+
+
+## Saving the results
+
+
+Let us save the following R objects for later use.
+
+
+```{r}
+save(
+  confirmed_df,
+  deaths_df,
+  population,
+  h,
+  stringency_dates,
+  names_countries,
+  names_countries_large,
+  names_countries_small,
+  order_countries_L,
+  order_countries_S,
+  colour_countries,
+  colour_table,
+  country_codes,
+  theme_paper,
+  file = "data/data_after_load.rda"
+  )
+```
+

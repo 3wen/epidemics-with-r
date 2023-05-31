@@ -1,0 +1,116 @@
+# Theoretical background {#sec-sir-model}
+
+In order to fully understand the logic which is at work behind the general epidemic data and how lockdowns can be justified, it is useful to detail the simplest epidemiological model in use. Epidemiologists have the habit of classifying people in different compartments and to model the transition between the different compartments using differential equations. The SIR model of @KermackMcKendrick1927 considers a finite and fixed population $N$ which is divided into three exclusive groups summing to $N$: 
+
+- $S$: Susceptible,
+- $I$: Infected,
+- $R$: Recovered (or Removed).
+
+These three letters giving its name to the model. The strength of the epidemic or the infection rate $\beta$ determines the passage from group $S$ to group $I$. The recovery rate $\gamma$ determines the passage from group $I$ to group $R$. When an infected person recovers, they become immune to the disease and cannot be reinfected. The system is completely described by three differential equations:
+
+$$
+\begin{aligned}
+\frac{\text{d}S}{\text{d}t} &= -\beta I \times \frac{S}{N}\\
+\frac{\text{d}I}{\text{d}t} &= -\beta I \times \frac{S}{N} - \gamma I\\
+\frac{\text{d}R}{\text{d}t} &= \gamma I
+\end{aligned}
+$$ {#eq-sir}
+
+
+The parameter $\gamma$ is a biological parameter. It measures the rate of recovery when being infected. It is equal to the inverse of the number of days needed to recover, $T_r = 1/\gamma$. With the COVID-19 pandemic, the average number of days to recover in most non-severe cases is between 7 to 14 days (see, _e.g._, @Park-etal2020). In @Moll2020, $\gamma=1/7$ and in @Wang_2020_CD, $\gamma=1/18$.
+
+The second parameter, $\beta$ is related to the contagiousness of the disease. It takes into account the probability of contracting the disease when a susceptible person comes into contact with an infected one. $T_C = 1/beta$ can be thought as the typical time between contacts. The contact rate $\beta$ is thus fundamentally a social parameter, because it depends on the contact habits (shaking hands or not for instance) as well as the hygiene habits of the population. It can vary a lot between countries and is the main object of inference (see, _e.g._, @Toda2020).
+
+## Reproduction Numbers
+
+Since 
+$$\frac{\text{d}S}{\text{d}t} + \frac{\text{d}I}{\text{d}t} + \frac{\text{d}R}{\text{d}t} = 0,$$
+and that by integration we find $S+I+R = N$, $N$ can be seen as an arbitrary integration constant. Consequently, $S$, $I$, and $R$ are usually considered to be proportions that add up to 1 with:
+$$
+S+I+R=1
+$$ {#eq-sir-constraint-1}
+
+leading to a simpler presentation of the model:
+$$
+\begin{aligned}
+\frac{\text{d}S}{\text{d}t} &= -\beta I \times S\\
+\frac{\text{d}I}{\text{d}t} &= -\beta I \times S - \gamma I\\
+\frac{\text{d}R}{\text{d}t} &= \gamma I
+\end{aligned}
+$$ {#eq-sir-simplified}
+
+
+The basic reproduction number $\mathcal{R}_0$, _i.e._, the average number that an infected person manages to contaminate during the period of contagion is given by $T_r / T_c = \beta / \gamma$. This number is fixed at the beginning of the epidemic and is its main characteristics. For COVID-19, the first values taken in the model of Imperial College were between 2 and 2.6, later updated to an interval between 2.4 and 3.3 for the UK. In European countries, values as high as between 3 to 4.7 were found as reported in @Adam2020.
+
+
+Because the epidemic evolves over time and finally stops, it is necessary to introduce a complementary notion, the effective reproduction number defined as:
+$$
+\mathcal{R}_t^e = \frac{\beta}{\gamma} \times S_t = \mathcal{R}_0 \times S_t.
+$$ {#eq-sir-effective-reproduction-number}
+
+This effective reproduction number decreases with the number of susceptibles $S_t$.
+
+- If $\beta > \gamma$ so that $\mathcal{R}_0 > 1$, then the epidemic grows exponentially.
+- If $\beta < \gamma$ so that $\mathcal{R}_0 < 1$, then the epidemic dies out exponentially.
+
+The major goal of a health policy is to obtain a $\mathcal{R}_0$ lower than 1.0, using a lockdown policy that will lead to a decrease in the value of $\beta$.
+
+The model assumes that when a person has been infected, they recover (or die), but can never be re-infected. Because of the conservation identity @eq-sir-constraint-1, the number of susceptible decreases while the number of recovered increases. But if in the long run $I$ tends to 0, the number of susceptible does not decreases to zero, because of herd immunity. Herd immunity is reached when a sufficient proportion of individuals have been infected and have become immune to the virus. This proportion of immune people depends on the contagiousness of the disease and is equal to:
+$$R^\star = 1- 1/\mathcal{R}_0.$$
+
+To this proportion corresponds the equilibrium proportion of infected people:
+$$S^\star = 1/\mathcal{R}_0.$$
+This proportion is reached at the peak of the epidemic and is usually lower than the limiting value $S_{\infty}$ when $t \rightarrow \infty$. So the model is overshooting by a non-negligible percentage as will be detailed below. With a plausible value of $\mathcal{R}_0 = 2.5$ for the COVID-19, the herd immunity threshold is $S^\star = 0.4$, meaning that herd immunity is reached when 60% of the population has recovered or is protected by a vaccine.
+
+
+The probability of dying is a constant proportion $\pi$ of the infected, completing thus the model by a fourth equation:
+$$
+\frac{\text{d}D}{\text{d}t} = \pi \gamma I,
+$$ {#eq-sir-dead}
+
+which simply means that the proportion of deaths is a fraction of $R$ with $D = \pi R$. This variable has no action on the dynamics of the model, but its prediction is of course of prime importance. As a matter of fact, most of the controversies reported in the literature (see, for instance @Adam2020) concern the predicted number of deaths. The number of deaths at the end of the epidemic is computed as:
+$$
+D = (1-S_{\infty}) \pi \times N \times S_0
+$$ {#eq-sir-dead-end}
+
+## Phase diagram
+
+The dynamics of the model is best described using phase diagrams as advocated in @Moll2020. Phase diagrams plot $S$ against $I$, assuming $S + I < 1$. After some algebraic manipulations, we can find the number of Infected as a function of the number of Susceptible, the $\mathcal{R}_0$ and the initial conditions. We get:
+$$
+I_t = 1-R_0 - S_t + \frac{1}{\mathcal{R}_0} log(S_t  / S_0),
+$$ {#eq-sir-infected}
+
+which is convenient for analysing some properties of the model. Typical initial conditions are:
+$$
+\begin{aligned}
+S_0 &= 1 - I_0,\\
+I_0 &\approx 0,\\
+R_0 &= 0.\\
+\end{aligned}
+$$
+
+where $I_0$ can be set for instance to $1/N$. With these elements in mind, a phase diagram can be drawn. For given initial conditions and a given grid of $S_t$ , the corresponding proportion of infected persons is obtained.
+
+## Introducing a Lockdown
+
+A lock-down is introduced in the SIR model by considering a time variable $\beta_t$ . If $\ell_t$ is the strength of the lock-down and $\beta_0$ the value of $\beta$ in the absence of lock-down, then:
+$\beta_t = \beta_0 \times (1-\ell_t)$,
+
+so that a lock-down is a very efficient way of decreasing the value of $\beta_t$ . It implies that:
+$$\mathcal{R}_t = (1-\ell_t)\mathcal{R}_0 S_t,$$
+which means that with a very strict lock-down the epidemic ceases to spread out. But that does not mean that the epidemic will cease, once the lock-down is removed.
+
+With a very strict lock-down the epidemic ceases to expand at an exponential rate. But that does not mean that the epidemic will stop immediately. However, a lock-down is applied over a limited period, so we have to be able to provide a graph where time is the horizontal axis. So we have to find a numerical way to find the trajectory of the model in its three variables, and a simple phase diagram is no longer sufficient. For given values of the parameters, the trajectory of a SIR model can be found by discretizing the system with $\Delta_t < 1$ and use the Euler’s method to solve the system:
+
+$$
+\begin{aligned}
+S_i & = S_{i-1} - \beta_0 (1-\ell_i) S_{i-1} I_{i-1} \Delta_t,\\
+I_i & = I_{i-1} + (\beta_0 (1-\ell_i) S_{i-1} I_{i-1} - \gamma I_{i-1}) \Delta_t,\\
+R_i & = I_{i-1} + \gamma I_{i-1} \Delta_t.
+\end{aligned}
+$$ {#eq-sir-discrete}
+
+
+When iterating this system, $1/\Delta_t$ iterations are needed to cover one period when the parameters are calibrated on a daily basis.
+
+

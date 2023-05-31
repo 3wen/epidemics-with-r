@@ -1,0 +1,9 @@
+# Preface {.unnumbered}
+
+As Michel likes to emphasize, our offices are located in a triangle within the [Aix Marseille School of Economics (AMSE)](https://www.amse-aixmarseille.fr/en) department of Aix Marseille Université, so we couldn't be closer. However, it was not until the lockdown brought about by the COVID-19 pandemic that we actually started working together. The COVID-19 pandemic, despite all the disasters it has brought upon a lot of people, has had at least one positive externality for us --it has prompted remote discussions. We have spent a lot of time exploring the use of entirely new methods for each of us. Through this ebook, we aim to share the knowledge we have gained during this period. There may be errors in the codes provided, so if you spot any, please don't hesitate to point them out to us.
+
+
+
+## Outline
+
+The first part of this ebook relates to the SIR model. In [Chapter -@sec-sir-model], the SIR model is presented. In [Chapter -@sec-sir-simulations], R codes to simulate an epidemics with the SIR model, with and without lockdown are provided. [Chapter -@sec-sir-animations] shows the dynamics of the epidemics with animated graphs. The second part of this ebook is devoted to statistical models. [Chapter -@sec-covid-data] presents the Covid-19 data from Oxford University. [Chapter -@sec-reproduction-number] shows how to estimate the reproduction number. [Chapter -@sec-phenomenological-models-background] presents the phenomenological models and [Chapter -@sec-phenomenological-models] shows how to use R to estimate those phenomenological models.

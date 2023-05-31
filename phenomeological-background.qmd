@@ -1,0 +1,1246 @@
+# Background on Phenomenological Models {#sec-phenomenological-models-background}
+
+This chapter provides a bit of background about phenomenological models that can be used to model an epidemic.
+
+
+## Simple phenomenological models
+
+We will present three models to estimate the number of cases and the number of deaths: the logistic model, the Gompertz model, and the Richards model.
+
+### A Generic Equation
+
+@Wang-etal2012 develop the similarity between the SIR model and the Richards population model @richards_flexible_1959 which lead them to consider the following growth equation for confirmed cases noted $C(t)$:
+$$
+\frac{d\, C}{d\, t} = r C^\alpha\left[1-\left(\frac{C}{K}\right)^\delta\right],
+$$ {#eq-leqbase}
+with $r$, $\alpha$, $\delta$ and $K$ being positive real numbers with the further restriction $0\leq\alpha\leq 1$.
+
+A general solution to this equation has the form:
+$$
+C(t) = F(r,\alpha,\delta,K,t),
+$$
+with the property that $\lim_{t \rightarrow\infty} C(t) = K$. If $C(t)$ corresponds to the total number of cases, the number of new cases is found by computing the derivative of $C(t)$ with respect to $t$ and noted $c(t)$. The relative speed of the process is defined as $c(t)/C(t)$ and is constant over time only when $\alpha=1$, $\delta=0$. The doubling time is constant over time only under those restrictions.
+
+A crucial question is to characterize the speed at which the process will reach its peak and when. @tsoularis_analysis_2002 have shown that the value of the peak is given by the value of $C$ at the inflexion point of the curve:
+$$
+C_{inf} = K \left(1+\frac{\delta}{\alpha}\right)^{-1/\delta}.
+$$ {#eq-lN-inf}
+The corresponding time, that we shall note $\tau$ is obtained by inverting $C(t)$. For some models, when an analytical expression for $C(t)$ is available, $\tau$ can be directly included in the parameterization. This point is of particular importance because it corresponds to the period when the epidemic starts to regress, or equivalently when the effective reproduction number $R_t$ starts to be below 1.
+
+
+### Logistic Model
+
+The logistic model initiated by @verhulst_recherches_1845 provides the most simple solution to the @eq-leqbase and corresponds to $\alpha=\delta=1$: 
+$$
+C(t) = \frac{K}{1+\exp\left(-r (t - \tau)\right)}.
+$$ {#eq-equationlogistic}
+
+It has been recently applied to study the evolution of an epidemic @ma_estimating_2020. We have introduced a parameterization where $\tau$ directly represents the inflection point with that $C(\tau) = K/2$. So the peak is at the mid of the epidemic which reaches its cumulated maximum $K$, $r$ representing the growth rate. The first order derivative of this function provides an estimate of the number of cases at each point in time:
+$$ 
+\frac{\partial C(t)}{\partial t} = \frac{K r \exp\left(-r(t-\tau)\right)}{\left[1+\exp(-r(t-\tau)\right]^2}.
+$$
+The relative speed is thus:
+$$
+\frac{c(t)}{C(t)} = r \frac{e^{-r(t-\tau)}}{1+e^{-r(t-\tau)}}.
+$$
+This model might appear as a nice solution to represents the three phases of an epidemic, but we shall discover below that its symmetry tends to be in contradiction with epidemic data. So we have to explore alternative solutions.
+
+
+In R, we define the logistic function as follows:
+
+```{r logistif_function}
+#' Logistic function
+#' 
+#' @param theta vector of named parameters
+#' @param x time
+logistic_f <-  function(theta, x) {
+  k <- theta[["k"]]
+  tau <- theta[["tau"]]
+  r <- theta[["r"]]
+  k / ( 1+exp( -r*( x - tau ) ) )
+}
+
+#' First derivative of the logistic function
+#' 
+#' @param theta vector of named parameters
+#' @param x time
+logistic_f_first_d <- function(theta, x) {
+  k <- theta[["k"]]
+  tau <- theta[["tau"]]
+  r <- theta[["r"]]
+  
+  (k * r * exp( -r * (x - tau) )) / (1+ exp( -r * (x - tau) ))^2
+}
+
+#' Second derivative of the logistic function
+#' 
+#' @param theta vector of named parameters
+#' @param x time
+logistic_f_second_d <- function(theta, x) {
+  k <- theta[["k"]]
+  tau <- theta[["tau"]]
+  r <- theta[["r"]]
+  
+  k*((2*r^2 * exp(-2*r*(x - tau)))/
+       (exp(-r*(x - tau)) + 1)^3 - 
+       (r^2*exp(-r*(x - tau)))/(exp(-r*(x - tau)) + 1)^2)
+}
+```
+
+
+Now, let us make some graph to give an idea of how the dynamic changes with the parameters $r$ and $tau$.
+
+```{r}
+library(tidyverse)
+library(scales)
+g_legend<-function(a.gplot){
+  tmp <- ggplot_gtable(ggplot_build(a.gplot))
+  leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
+  legend <- tmp$grobs[[leg]]
+  return(legend)}
+```
+
+The different values for $r$ and $tau$ ($k$ is set to 5000).
+```{r}
+situations <- 
+  expand_grid(tau = c(25,35), r = c(.15, .25, .35)) |> 
+  mutate(k = 5000)
+```
+
+Let us apply, for a set of parameters, at different time horizon (from 0 to 60 by steps of .1) the logistic function, its first and second derivatives with respect to time. To do so, we define a "simulation" function:
+```{r}
+#' Simulation of the logistic model for some parameters
+#' 
+#' @param i row number of situations
+simu <- function(i) {
+  current_params <- situations |> slice(i)
+  current_params <- c(as_vector(current_params)) |> as.list()
+  
+  n     <- 60
+  step  <- .01
+  sim   <-  logistic_f(
+    theta = current_params, 
+    x = seq(0,n, by = step)
+  )
+  simD  <-  logistic_f_first_d(
+    theta = current_params, 
+    x = seq(0,n, by = step)
+  )
+  simD2 <-  logistic_f_second_d(
+    theta = current_params, 
+    x = seq(0,n, by = step)
+  )
+  
+  tibble(
+    t = seq(0, n, by = step),
+    k = current_params[["k"]], 
+    tau = current_params[["tau"]],
+    r = current_params[["r"]],
+    sim = sim
+  ) |> 
+    mutate(
+      simD = simD,
+      simD2 = simD2
+    )
+}
+```
+
+Let us do so for all the different sets of parameters:
+```{r}
+simu_res <- map_df(1:nrow(situations), simu)
+```
+
+We would like to show the thresholds on the graph:
+```{r}
+threshold_times <- 
+  simu_res |> 
+  group_by(k, tau, r) |> 
+  summarise(threshold_time = unique(tau)) |> 
+  ungroup() |> 
+  mutate(
+    r = str_c("$\\r = ", r, "$"),
+    tau = str_c("$\\tau = ", tau, "$")
+  )
+threshold_times
+```
+
+Now, we are ready to create the plots:
+```{r}
+#| fig-cap: Illustration of the logistic model for different values for $\tau$ and $r$, with $k=5,000$
+#| label: fig-illustration-logistic-model
+p_simu_logis <- 
+  ggplot(
+    data =  simu_res |> 
+      mutate(
+        r = str_c("$\\r = ", r, "$"),
+        tau = str_c("$\\tau = ", tau, "$")
+      ),
+    mapping = aes(x = t)
+  ) +
+  geom_line(mapping = aes(y = sim, linetype = "sim")) +
+  geom_line(mapping = aes(y = simD*10, linetype = "simD")) +
+  geom_line(mapping = aes(y = simD2*10, linetype = "simD2")) +
+  geom_vline(
+    data = threshold_times, 
+    mapping = aes(xintercept = threshold_time),
+    colour = "red", linetype = "dotted") +
+  facet_grid(
+    r~tau, 
+    labeller = as_labeller(
+      latex2exp::TeX, 
+      default = label_parsed
+    )
+  ) +
+  labs(x = "Time", y = latex2exp::TeX("$F(t)$")) +
+  scale_y_continuous(
+    labels = scales::comma,
+    sec.axis = sec_axis(
+      ~./10, 
+      name = latex2exp::TeX(
+        "$\\partial F(t) / \\partial t$, $\\partial^2 F(t) / \\partial t^2$"
+      ),
+      labels = comma)) +
+  scale_linetype_manual(
+    NULL,
+    values = c("sim" = "solid", "simD" = "dashed", "simD2" = "dotdash"),
+    labels = c(
+      "sim" = latex2exp::TeX("$F(t)$"), 
+      "simD" = latex2exp::TeX("$\\partial F(t) / \\partial t$"),
+      "simD2" = latex2exp::TeX("$\\partial^2 F(t) / \\partial t^2$"))) +
+  theme(axis.ticks.y = element_blank())
+
+p_simu_logis +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+
+#### Key moments
+
+Let us focus on the key moment of the epidemics. Let us illustrate them using one of the scenarios.
+```{r}
+data_sim <- simu(1)
+```
+
+The starting point:
+```{r}
+df_starting <- 
+  data_sim %>% 
+  filter(sim >= 1) %>% 
+  slice(1)
+```
+The acceleration point
+```{r}
+df_acceleration <- 
+  data_sim %>% 
+  filter(simD2 == max(simD2)) %>% 
+  slice(1)
+```
+
+The peak:
+```{r}
+df_peak <- 
+  data_sim %>% 
+  filter(simD == max(simD)) %>% 
+  slice(1)
+```
+
+The deceleration point:
+```{r}
+df_deceleration <- 
+  data_sim %>% 
+  filter(simD2 == min(simD2)) %>% 
+  slice(1)
+```
+
+The return point:
+```{r}
+df_return <- 
+  data_sim %>% 
+  filter(sim > k - 1) %>% 
+  slice(1)
+```
+
+Let us reshape the data:
+```{r}
+df_plot_key_moments <- 
+  data_sim %>% 
+  gather(key, value, sim, simD, simD2)
+
+df_plot_key_moments_points <- 
+  df_acceleration %>% mutate(label = "$t_A$") %>% 
+  bind_rows(df_peak %>% mutate(label = "$t_P$")) %>% 
+  bind_rows(df_deceleration %>% mutate(label = "$t_D$"))
+```
+
+And the plot:
+```{r}
+#| fig-cap: Key moments of the epidemics, using a logistim model.
+#| label: fig-illustration-key-moments-logistic
+p_key_moments <- 
+  ggplot() +
+  geom_hline(yintercept = 0, col = "grey") +
+  geom_line(
+    data = df_plot_key_moments,
+    mapping = aes(x = t, y = value, linetype = key)
+  ) +
+  geom_segment(
+    data = df_plot_key_moments_points,
+    mapping = aes(x = t, xend = t, y = 0, yend = sim),
+    linetype = "dotted", colour = "red"
+  ) +
+  geom_point(
+    data = df_plot_key_moments_points,
+    mapping = aes(x = t, y = sim), size = 2
+  ) +
+  geom_point(
+    data = df_plot_key_moments_points,
+    mapping = aes(x = t, y = sim),
+    size = 1, colour = "white"
+    ) +
+  geom_text(
+    data = df_plot_key_moments_points,
+    mapping = aes(x = t-2, y = sim + .05*k, label = label)
+  ) +
+  labs(x = "Time", y = latex2exp::TeX("$F(t)$")) +
+  scale_linetype_manual(
+    NULL,
+    values = c("sim" = "solid", "simD" = "dashed", "simD2" = "dotdash"),
+    labels = c(
+      "sim" = latex2exp::TeX("$F(t)$"),
+      "simD" = latex2exp::TeX("$\\partial F(t) / \\partial t$"),
+      "simD2" = latex2exp::TeX("$\\partial^2 F(t) / \\partial t^2$")
+    )
+  ) +
+  theme(axis.text = element_blank(), axis.ticks = element_blank())
+
+p_key_moments
+```
+
+
+### Gompertz Model
+
+The Gompertz model [@gompertz_nature_1825] has three parameters, but corresponds to alternative restrictions with $\alpha=1$ but this time $\delta=0$. The solution to @eq-leqbase can be written as follows @tjorve_use_2017:
+$$
+C(t) = K \exp\left[ -\exp \left(-r(t-\tau) \right)\right].
+$$ {#eq-gom}
+In @eq-gom, the parameters are interpreted in the same way as those of the logistic model. The main difference between the logistic and Gompertz models is that the latter is not symmetric around the inflection point, which now appears earlier as $C(\tau) = K/e$. The first order derivative of this function provides an estimate of the number of cases at each point in time:
+$$
+\frac{\partial C(t)}{\partial t} = K r\exp\left[r(\tau-t) - \exp\left(r(\tau-t)\right)\right].
+$$
+So that the relative speed of the epidemic is given by:
+$$
+\frac{c(t)}{C(t)} = r e^{-r(t-\tau)},
+$$
+with of course a maximum speed at the peak. 
+
+
+In R, this translates to:
+
+```{r}
+#' Gompertz function with three parameters
+#' 
+#' @param theta vector of named parameters
+#' @param x time
+gompertz_f <- function(theta, x) {
+  k <- theta[["k"]]
+  tau <- theta[["tau"]]
+  r <- theta[["r"]]
+  k*exp( -exp( -r * (x - tau) ) )
+}
+#' First order derivative of Gompertz wrt x
+#' 
+#' @param theta vector of named parameters
+#' @param x time
+gompertz_f_first_d <- function(theta, x) {
+  k <- theta[["k"]]
+  tau <- theta[["tau"]]
+  r <- theta[["r"]]
+  
+  k * (x - tau) * exp(r * (tau - x) - exp(r * (tau - x)))
+}
+
+#' Second order derivative of Gompertz
+#' 
+#' @param theta vector of named parameters
+#' @param x time
+gompertz_f_second_d <- function(theta, x) {
+  k <- theta[["k"]]
+  tau <- theta[["tau"]]
+  r <- theta[["r"]]
+  
+  -k * r^2 * exp(-r * (x - tau)) * 
+    exp(-exp(-r * (x - tau))) + 
+    k * r^2 * (exp(-r * (x - tau)))^2 * exp(-exp(-r * (x - tau)))
+}
+```
+
+
+Let us make some graph to give an idea of how the dynamic changes with the parameters $r$ and $tau$.
+```{r}
+k <- 5000
+situations <- 
+  expand_grid(tau = c(25,35), r = c(.15, .25, .35)) |> 
+  mutate(k = k)
+
+#' Simulation of the logistic model for some parameters
+#' 
+#' @param i row number of situations
+simu_gomp <- function(i) {
+  current_params <- situations |> slice(i)
+  current_params <- c(as_vector(current_params)) |> as.list()
+  
+  n <- 60
+  step <- .01
+  sim <-  gompertz_f(theta = current_params, x = seq(1,n, by = step))
+  simD <-  gompertz_f_first_d(theta = current_params, x = seq(1,n, by = step))
+  simD2 <-  gompertz_f_second_d(theta = current_params, x = seq(1,n, by = step))
+  
+  tibble(
+    t = seq(1, n, by = step),
+    k = current_params[["k"]],
+    tau = current_params[["tau"]],
+    r = current_params[["r"]],
+    sim = sim) |> 
+    mutate(simD = simD,
+           simD2 = simD2)
+  
+}
+```
+
+The values of $C(t)$, its first and second derivatives with respect to time can be computed for the different scenarios:
+```{r}
+simu_gomp_res <- map_df(1:nrow(situations), simu_gomp)
+```
+
+The threshold for each scenario:
+```{r}
+threshold_times <-
+  simu_gomp_res |>
+  group_by(k, tau, r) |>
+  summarise(threshold_time = unique(tau)) |>
+  ungroup() |> 
+  mutate(
+    r = str_c("$\\r = ", r, "$"),
+    tau = str_c("$\\tau = ", tau, "$")
+  )
+```
+
+And we can plot the results:
+```{r}
+#| fig-cap: Illustration of Gompertz model for different values for $\tau$ and $r$, with $k=5,000$
+#| label: fig-illustration-gompertz-model
+p_simu_gomp <- 
+  ggplot(
+  data = simu_gomp_res |> 
+    mutate(
+      r = str_c("$\\r = ", r, "$"),
+      tau = str_c("$\\tau = ", tau, "$")
+    ),
+  mapping = aes(x = t)) +
+  geom_line(mapping = aes(y = sim, linetype = "sim")) +
+  geom_line(mapping = aes(y = simD, linetype = "simD")) +
+  geom_line(mapping = aes(y = simD2, linetype = "simD2")) +
+  facet_grid(
+    r~tau,
+    labeller = as_labeller(
+      latex2exp::TeX, 
+      default = label_parsed
+    )
+  ) +
+  geom_vline(
+    data = threshold_times, 
+    mapping = aes(xintercept = threshold_time), 
+    colour = "red", linetype = "dotted") +
+  labs(x = "Time", y = latex2exp::TeX("$F(t)$")) +
+  scale_linetype_manual(
+    NULL,
+    values = c("sim" = "solid", "simD" = "dashed", "simD2" = "dotdash"),
+    labels = c("sim" = latex2exp::TeX("$F(t)$"),
+               "simD" = latex2exp::TeX("$\\partial F(t) / \\partial t$"),
+               "simD2" = latex2exp::TeX("$\\partial^2 F(t) / \\partial t^2$")
+    )
+  ) +
+  theme(axis.ticks.y = element_blank())
+
+p_simu_gomp +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+
+### Richards Model
+
+
+The question "what happens with $0<\delta<1$" finds an answer with @richards_flexible_1959 and the Richards model which is widely used in nonlinear regression analysis. The solution to @eq-leqbase provided in @lee_estimation_2020 corresponds to:
+$$
+C(t) = K\left[ 1 + \delta\exp\left( -r (t-\tau)\right)\right]^{-1/\delta},
+$$
+where parameters $K$ and $\tau$ and are interpreted in the same way as those of the logistic and Gompertz models, while the growth rate is now $r/\delta$. The parameter $\delta>0$ is used to control the value of the curve at the inflection point $C(\tau) = K/(1+\delta)^{1/\delta}$, and thus the asymmetry around $t = \tau$. This model considers one more parameter than the Gompertz model to model this asymmetry. The first order derivative of this function will provide an estimate of the number of cases at each point in time:
+$$
+\frac{\partial C(t)}{\partial t} =  \frac{K r\left[\delta\exp\left(r(\tau-t)\right)+1 \right]^{-1/\delta}}{\delta+\exp\left(r(t-\tau)\right)}, 
+$$
+leading to a relative speed of:
+$$
+\frac{c(t)}{C(t)} = r \frac{e^{-r(t-\tau)}}{1+\delta e^{-r(t-\tau)}}.
+$$
+This model is also a generalization of the two previous ones as can be seen for instance when comparing the different relative speeds.
+
+
+In R, this translates to the following functions:
+
+```{r}
+#' Richards function with four parameters
+#' 
+#' @param theta vector of named parameters
+#' @param x time
+richards_f <- function(theta, x) {
+  k <- theta[["k"]]
+  tau <- theta[["tau"]]
+  r <- theta[["r"]]
+  delta <- theta[["delta"]]
+  
+  k / (1 + delta * exp(-r * delta * (x - tau)))^(1 / delta)
+}
+
+
+#' First order derivative of Richards function wrt time (x)
+#' 
+#' @param theta vector of named parameters
+#' @param x time
+richards_f_first_d <- function(theta, x) {
+  k <- theta[["k"]]
+  tau <- theta[["tau"]]
+  r <- theta[["r"]]
+  delta <- theta[["delta"]]
+  
+  delta * k * r * exp(delta * (-r) * (x - tau)) * 
+    (delta * exp(delta * (-r) * (x - tau)) + 1)^(-1 / delta - 1)
+}
+
+
+#' Second order derivative of Richards function wrt time (x)
+#' 
+#' @param theta vector of named parameters
+#' @param x time
+richards_f_second_d <- function(theta, x) {
+  k <- theta[["k"]]
+  tau <- theta[["tau"]]
+  r <- theta[["r"]]
+  delta <- theta[["delta"]]
+  
+  k * ((-1 / delta - 1) * 
+         delta^3 * r^2 * (-exp(-2 * delta * r * (x - tau))) *
+         (delta * exp(delta * (-r) * (x - tau)) + 1)^(-1 / delta - 2) - 
+         delta^2 * r^2 * exp(delta * (-r) * (x - tau)) * 
+         (delta * exp(delta * (-r) * (x - tau)) + 1)^(-1 / delta - 1))
+}
+```
+
+Again, let us provide different scenarios to plot the curves for $C(t)$, its first and second derivatives with respect to time. We will make the parameters $\delta$ and $r$ vary. We set $k$ to $5,000$ and $\tau$ to 25.
+```{r}
+situations <- 
+  expand_grid(delta = c(.5, 1.5), r = c(.15, .25, .35)) |> 
+  mutate(k = 5000, tau = 25)
+```
+
+We create a function to get the values of $C(t)$ and its derivatives depending on the scenario.
+```{r}
+#' Simulation of Richards model for some parameters
+#' 
+#' @param i row number of situations
+simu_richards <- function(i) {
+  current_params <- situations |> slice(i)
+  current_params <- c(as_vector(current_params)) |> as.list()
+  
+  n <- 60
+  step <- .01
+  sim <-  richards_f(theta = current_params, x = seq(1,n, by = step))
+  simD <-  richards_f_first_d(theta = current_params, x = seq(1,n, by = step))
+  simD2 <-  richards_f_second_d(theta = current_params, x = seq(1,n, by = step))
+  
+  tibble(
+    t = seq(1, n, by = step),
+    k = current_params[["k"]], 
+    tau = current_params[["tau"]],
+    r = current_params[["r"]],
+    delta = current_params[["delta"]],
+    sim = sim
+    ) |> 
+    mutate(simD = simD,
+           simD2 = simD2)
+}
+```
+
+This function is then applied to the different scenarios:
+```{r}
+simu_richards_res <- map_df(1:nrow(situations), simu_richards)
+```
+
+The thresholds:
+```{r}
+threshold_times <-
+  simu_richards_res |>
+  group_by(k, tau, r, delta) |>
+  summarise(threshold_time = unique(tau)) |>
+  ungroup() |>
+  mutate(
+    r = str_c("$r = ", r, "$"),
+    delta = str_c("$\\delta = ", delta, "$")
+  )
+```
+
+
+```{r}
+#| fig-cap: Illustration of Richards' model for different values for $\delta$ and $r$, with $k=5,000$ and $\tau=25$
+#| label: fig-illustration-richards-model
+p_simu_richards <- 
+  ggplot(
+    data = simu_richards_res |> 
+      mutate(
+        r = str_c("$r = ", r, "$"),
+        delta = str_c("$\\delta = ", delta, "$")
+      ),
+    mapping = aes(x = t)
+  ) +
+  geom_line(mapping = aes(y = sim, linetype = "sim")) +
+  geom_line(mapping = aes(y = simD * 10, linetype = "simD")) +
+  geom_line(mapping = aes(y = simD2 * 10, linetype = "simD2")) +
+  facet_grid(
+    r ~ delta,
+    labeller = as_labeller(
+      latex2exp::TeX, 
+      default = label_parsed
+    )
+  ) +
+  geom_vline(
+    data = threshold_times, 
+    mapping = aes(xintercept = threshold_time),
+    colour = "red", linetype = "dotted") +
+  labs(x = "Time", y = latex2exp::TeX("$F(t)$")) +
+  scale_y_continuous(
+    labels = comma,
+    breaks = seq(0, 5000, by = 1000),
+    sec.axis = sec_axis(
+      ~./10,
+      name = latex2exp::TeX(
+        "$\\partial F(t)/\\partial t$, $\\partial^2 F(t)/\\partial t^2$"
+      ),
+      labels = comma)
+  ) +
+  scale_linetype_manual(
+    NULL,
+    values = c("sim" = "solid", "simD" = "dashed", "simD2" = "dotdash"),
+    labels = c("sim" = latex2exp::TeX("$F(t)$"),
+               "simD" = latex2exp::TeX("$\\partial F(t) / \\partial t$"),
+               "simD2" = latex2exp::TeX("$\\partial^2 F(t) / \\partial t^2$"))
+  ) +
+  theme(axis.ticks.y = element_blank())
+
+p_simu_richards +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+
+
+## Double sigmoid functions to account for a second wave
+
+One possibility to account for two distinct phases is to use a double sigmoid. This is done by adding or multiplying two sigmoid functions, as follows:
+$$
+C(t) = C_{1}^{(m_1)}(t) + C_{2}^{(m_2)}(t),
+$$
+where $C_{1}^{(m_1)}(t)$ is the first sigmoid function and $C_{2}^{(m_2)}(t)$ is the second one. The types $m_1$ and $m_2$ of sigmoid can be, for example, a logistic curve (see, _e.g._, @Lipovetsky_2010_JoAS or @bock_1973_HB), a Gompertz curve @Thissen_1976_AHB, or a Richards curve @Oswald_2012_FlexParamCurve.
+
+We limit ourselves here to the presentation of a double-Gompertz curve:
+$$
+\begin{aligned}
+C(t)  = & K_1\exp\left[ -\exp\left( -r_1(t-\tau_1)\right)\right] \\
+& + (K_2 - K_1)\exp\left[ -\exp\left( -r_2(t-\tau_2)\right)\right],
+\end{aligned}
+$$
+where $K_1$ and $K_2$ are the intermediate and final plateau of saturation, respectively. The parameters $\tau_1$ and $\tau_2$ define the inflection points of each phase when the intermediate plateau is long enough while the growth of the process is determined by $r_1$ and $r_2$, for the first and second sigmoid. However there is no analytical formula to determine the value and position of the two peaks. We have to evaluate numerically the extremum of the second order derivative of $C(t)$. The first order derivative of $C(t)$ provides an estimate of the number of cases at each point of time:
+$$
+\begin{aligned}
+\frac{\partial C(t)}{\partial t}  =  & K_1 r_1 \exp(-r_1(t-\tau_1) \exp(-\exp(-r1(t-\tau1))) \\
+& + (K_2-K_1)r_2\exp(-r_2(t-\tau_2) \exp(-\exp(-r2(t-\tau2))).
+\end{aligned}
+$$
+The formula giving the relative speed $c(t)/C(t)$ does not lead to any simplification and will not be detailed.  
+
+### Double Logistic
+
+The double logistic function, its first and second derivatives with respect to time can be coded as follows:
+
+```{r}
+# Double logistic
+double_logistic_f <-  function(theta, x) {
+  K1 <- theta[["K1"]]
+  tau1 <- theta[["tau1"]]
+  r1 <- theta[["r1"]]
+  K2 <- theta[["K2"]]
+  tau2 <- theta[["tau2"]]
+  r2 <- theta[["r2"]]
+  
+  (K1/(1 + exp(-r1 * (x - tau1)))) + ((K2 - K1)/(1 + exp(-r2 * (x - tau2))))
+}
+# Double logistic in two parts
+double_logistic_f_2 <- function(theta, x) {
+  K1 <- theta[["K1"]]
+  tau1 <- theta[["tau1"]]
+  r1 <- theta[["r1"]]
+  K2 <- theta[["K2"]]
+  tau2 <- theta[["tau2"]]
+  r2 <- theta[["r2"]]
+  
+  f_1 <- K1 / (1 + exp(-r1 * (x - tau1)))
+  f_2 <- (K2 - K1)/(1 + exp(-r2 * (x - tau2)))
+  tibble(x = x, f_1 = f_1, f_2 = f_2)
+}
+
+# First derivative
+double_logistic_f_first_d <-  function(theta, x) {
+  K1 <- theta[["K1"]]
+  tau1 <- theta[["tau1"]]
+  r1 <- theta[["r1"]]
+  K2 <- theta[["K2"]]
+  tau2 <- theta[["tau2"]]
+  r2 <- theta[["r2"]]
+  
+  (r1 * K1 * exp(-r1 * (x - tau1))) / ((exp(-r1 * (x-tau1)) + 1)^2) +
+    (r2 * (K2-K1) * exp(-r2 * (x - tau2))) / ((exp(-r2 * (x-tau2)) + 1)^2)
+}
+# Second derivative
+double_logistic_f_second_d <-  function(theta, x) {
+  K1 <- theta[["K1"]]
+  tau1 <- theta[["tau1"]]
+  r1 <- theta[["r1"]]
+  K2 <- theta[["K2"]]
+  tau2 <- theta[["tau2"]]
+  r2 <- theta[["r2"]]
+  
+  K1 *  ((2 * r1^2 * exp(-2 * r1 * (x - tau1)))/(exp(-r1 * (x - tau1)) + 1)^3 - 
+           ( r1^2 * exp(- r1 * (x - tau1)))/(exp(-r1 * (x - tau1)) + 1)^2) +
+    
+    (K2-K1) *  
+    ((2 * r2^2 * exp(-2 * r2 * (x - tau2)))/(exp(-r2 * (x - tau2)) + 1)^3 - 
+       ( r2^2 * exp(- r2 * (x - tau2)))/(exp(-r2 * (x - tau2)) + 1)^2)
+  
+}
+```
+
+And now, let us make some illustrations by varying $r_1$ and $r_2$.
+```{r}
+situations <- 
+  expand_grid(r1 = c(.2, .5), r2 = c(.2, .5)) |> 
+  mutate(
+    K1   = 2500,
+    K2   = 5000,
+    tau1 = 20,
+    tau2 = 40
+  )
+```
+
+The function that simulates $C(t)$ and its first and second derivatives with respect to time for a single scenario:
+```{r}
+#' Simulation of the logistic model for some parameters
+#' 
+#' @param i row number of situations
+simu <- function(i) {
+  current_params <- situations |> slice(i)
+  current_params <- c(as_vector(current_params)) |> as.list()
+  
+  n <- 60
+  step <- .01
+  sim <-  double_logistic_f(theta = current_params, x = seq(1,n, by = step))
+  simD <-  double_logistic_f_first_d(
+    theta = current_params, x = seq(1,n, by = step))
+  simD2 <-  double_logistic_f_second_d(
+    theta = current_params, x = seq(1,n, by = step))
+  
+  tibble(
+    t = seq(1, n, by = step),
+    K1 = current_params[["K1"]],
+    r1 = current_params[["r1"]],
+    tau1 = current_params[["tau1"]],
+    K2 = current_params[["K2"]],
+    r2 = current_params[["r2"]],
+    tau2 = current_params[["tau2"]],
+    sim = sim) |> 
+    mutate(simD = simD,
+           simD2 = simD2)
+  
+}
+```
+
+The simulated values for all the scenarios:
+```{r}
+simu_res <- map_df(1:nrow(situations), simu)
+```
+
+
+The thresholds:
+```{r}
+threshold_times <- 
+  simu_res |> 
+  group_by(K1, tau1, r1, K2, tau2, r2) |> 
+  summarise(
+    threshold_time_1 = unique(tau1),
+    threshold_time_2 = unique(tau2)
+  ) |> 
+  ungroup() |> 
+  mutate(
+    r1 = str_c("$r_1 = ", r1, "$"),
+    r2 = str_c("$r_2 = ", r2, "$")
+  )
+```
+
+```{r}
+#| fig-cap: "Illustration of a Double Logistic model for different values for $r_1$ and $r_2$, with $K_1=2,500$, $K_2 = 5,000$, $\\tau_1 = 20$, and $\\tau_2 = 40$"
+#| label: fig-illustration-double-logistic-model
+p_simu_double_logis <- 
+  ggplot(
+    data = simu_res |> 
+      mutate(
+        r1 = str_c("$r_1 = ", r1, "$"),
+        r2 = str_c("$r_2 = ", r2, "$")
+      ),
+    mapping = aes(x = t)
+  ) +
+  geom_line(aes(y = sim, linetype = "sim")) +
+  geom_line(aes(y = simD * 10, linetype = "simD")) +
+  geom_line(aes(y = simD2 * 10, linetype = "simD2")) +
+  geom_vline(
+    data = threshold_times,
+    mapping = aes(xintercept = threshold_time_1),
+    colour = "red", linetype = "dotted") +
+  geom_vline(
+    data = threshold_times,
+    mapping = aes(xintercept = threshold_time_2),
+    colour = "red", linetype = "dotted") +
+  facet_grid(
+    r2 ~ r1,
+    labeller = as_labeller(
+      latex2exp::TeX, 
+      default = label_parsed
+    )
+  ) +
+  labs(x = "Time", y = "$F(t)$") +
+  scale_y_continuous(
+    labels = comma,
+    sec.axis = sec_axis(
+      ~./10,
+      name = latex2exp::TeX(
+        "$\\partial F(t) / \\partial t$, $\\partial^2 F(t) / \\partial t^2$"
+      ),
+      labels = comma)
+  ) +
+  scale_linetype_manual(
+    NULL,
+    values = c("sim" = "solid", "simD" = "dashed", "simD2" = "dotdash"),
+    labels = c("sim" = latex2exp::TeX("$F(t)$"), 
+               "simD" = latex2exp::TeX("$\\partial F(t) / \\partial t$"),
+               "simD2" = latex2exp::TeX("$\\partial^2 F(t) / \\partial t^2$"))
+               ) +
+  theme(axis.ticks.y = element_blank())
+
+p_simu_double_logis +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+
+
+### Double Gompertz Model
+
+
+The double Gompertz function, its first and second derivatives with respect to time can be coded as follows:
+
+```{r}
+# Double-Gompertz function
+#' @param theta vector of named parameters
+#' @param x observation / training example
+double_gompertz_f <- function(theta, x) {
+  K1 <- theta[["K1"]]
+  tau1 <- theta[["tau1"]]
+  r1 <- theta[["r1"]]
+  K2 <- theta[["K2"]]
+  tau2 <- theta[["tau2"]]
+  r2 <- theta[["r2"]]
+  
+  f_1 <- K1 * exp(-exp(-r1 * (x - tau1)))
+  f_2 <- (K2-K1) * exp(-exp(-r2 * (x - tau2)))
+  
+  f_1 + f_2
+}
+
+#' Double-Gompertz function in two parts
+#' 
+double_gompertz_f_2 <- function(theta, x) {
+  K1 <- theta[["K1"]]
+  tau1 <- theta[["tau1"]]
+  r1 <- theta[["r1"]]
+  K2 <- theta[["K2"]]
+  tau2 <- theta[["tau2"]]
+  r2 <- theta[["r2"]]
+
+  f_1 <- K1 * exp(-exp(-r1 * (x - tau1)))
+  f_2 <- (K2-K1) * exp(-exp(-r2 * (x-tau2)))
+  tibble(x = x, f_1 = f_1, f_2 = f_2)
+}
+
+#' First derivative
+#' 
+double_gompertz_f_first_d <- function(theta, x) {
+  K1 <- theta[["K1"]]
+  tau1 <- theta[["tau1"]]
+  r1 <- theta[["r1"]]
+  K2 <- theta[["K2"]]
+  tau2 <- theta[["tau2"]]
+  r2 <- theta[["r2"]]
+
+  f_1_d <- r1 * K1 * exp(-r1 * (x - tau1) - exp(- r1 * (x - tau1)))
+  f_2_d <- r2 * (K2-K1) * exp(-r2 * (x - tau2) - exp(- r2 * (x - tau2)))
+  
+  f_1_d + f_2_d
+}
+
+#' Second derivative
+double_gompertz_f_second_d <- function(theta, x) {
+  K1 <- theta[["K1"]]
+  tau1 <- theta[["tau1"]]
+  r1 <- theta[["r1"]]
+  K2 <- theta[["K2"]]
+  tau2 <- theta[["tau2"]]
+  r2 <- theta[["r2"]]
+  
+  -K1 * r1^2 * exp(-r1*(x - tau1)) * exp(-exp(-r1*(x - tau1))) +
+    K1 * r1^2 * (exp( -r1*(x - tau1)))^2 * exp(-exp(-r1*(x - tau1))) - 
+    (K2 - K1) * r2^2 * exp( -r2 * (x - tau2)) * exp( -exp(-r2*(x - tau2))) +
+    (K2 - K1) * r2^2 * (exp( -r2 * (x - tau2)))^2 * exp(-exp(-r2*(x-tau2)))
+}
+```
+
+
+Let us make some illustrations by varying $r_1$ and $r_2$.
+```{r}
+situations <- 
+  expand_grid(r1 = c(.2, .5), r2 = c(.2, .5)) |> 
+  mutate(
+    K1     = 2500,
+    K2     = 5000,
+    tau1   = 20,
+    tau2   = 40
+  )
+```
+
+The function that simulates $C(t)$ and its first and second derivatives with respect to time for a single scenario:
+```{r}
+#' Simulation of the logistic model for some parameters
+#' 
+#' @param i row number of situations
+simu <- function(i) {
+  current_params <- situations |> slice(i)
+  current_params <- c(as_vector(current_params)) |> as.list()
+  
+  n <- 60
+  step <- .01
+  sim <-  double_gompertz_f(
+    theta = current_params, x = seq(1,n, by = step))
+  simD <-  double_gompertz_f_first_d(
+    theta = current_params, x = seq(1,n, by = step))
+  simD2 <-  double_gompertz_f_second_d(
+    theta = current_params, x = seq(1,n, by = step))
+  
+  tibble(
+    t = seq(1, n, by = step),
+    K1 = current_params[["K1"]],
+    r1 = current_params[["r1"]],
+    tau1 = current_params[["tau1"]],
+    K2 = current_params[["K2"]],
+    r2 = current_params["r2"],
+    tau2 = current_params[["tau2"]],
+    sim = sim) |> 
+    mutate(simD = simD,
+           simD2 = simD2)
+  
+}
+```
+
+Let us apply this function to all scenarios:
+```{r}
+simu_res <- map_df(1:nrow(situations), simu)
+```
+
+The thresholds:
+```{r}
+threshold_times <- 
+  simu_res |> 
+  group_by(K1, tau1, r1, K2, tau2, r2) |> 
+  summarise(threshold_time_1 = unique(tau1),
+            threshold_time_2 = unique(tau2)) |> 
+  ungroup() |> 
+  mutate(
+    r1 = str_c("$\\r_1 = ", r1, "$"),
+    r2 = str_c("$\\r_2 = ", r2, "$")
+  )
+```
+
+And the the plots:
+```{r}
+#| fig-cap: "Illustration of a Double Gompertz model for different values for $r_1$ and $r_2$, with $K_1=2,500$, $K_2 = 5,000$, $\\tau_1 = 20$, and $\\tau_2 = 40$"
+#| label: fig-illustration-double-gompertz-model
+p_simu_double_gompertz <- 
+  ggplot(
+    data =  simu_res |> 
+      mutate(r1 = str_c("$\\r_1 = ", r1, "$"),
+             r2 = str_c("$\\r_2 = ", r2, "$")
+      ),
+    mapping = aes(x = t)) +
+  geom_line(aes(y = sim, linetype = "sim")) +
+  geom_line(aes(y = simD*10, linetype = "simD")) +
+  geom_line(aes(y = simD2*10, linetype = "simD2")) +
+  geom_vline(
+    data = threshold_times, 
+    mapping = aes(xintercept = threshold_time_1),
+    colour = "red", linetype = "dotted") +
+  geom_vline(
+    data = threshold_times,
+    mapping = aes(xintercept = threshold_time_2),
+    colour = "red", linetype = "dotted") +
+  facet_grid(
+    r2 ~ r1,
+    labeller = as_labeller(
+      latex2exp::TeX, 
+      default = label_parsed
+    )
+  ) +
+  labs(x = "Time", y = latex2exp::TeX("$F(t)$")) +
+  scale_y_continuous(
+    labels = comma,
+    sec.axis = sec_axis(
+      ~./10, 
+      name = latex2exp::TeX(
+        "$\\partial F(t) / \\partial t$, $\\partial^2 F(t) / \\partial t^2$"
+      ),
+      labels = comma)) +
+  scale_linetype_manual(
+    NULL,
+    values = c("sim" = "solid", "simD" = "dashed", "simD2" = "dotdash"),
+    labels = c("sim" = latex2exp::TeX("$F(t)$"),
+               "simD" = latex2exp::TeX("$\\partial F(t) / \\partial t$"),
+               "simD2" = latex2exp::TeX("$\\partial^2 F(t) / \\partial t^2$"))
+    ) +
+  theme(axis.ticks.y = element_blank())
+
+p_simu_double_gompertz +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+### Double Richards Model
+
+
+The double Richards function, its first and second derivatives with respect to time can be coded as follows:
+
+```{r}
+#' Double Richards
+#' 
+double_richards_f <- function(theta, x) {
+  K1 <- theta[["K1"]]
+  tau1 <- theta[["tau1"]]
+  r1 <- theta[["r1"]]
+  delta1 <- theta[["delta1"]]
+  K2 <- theta[["K2"]]
+  tau2 <- theta[["tau2"]]
+  r2 <- theta[["r2"]]
+  delta2 <- theta[["delta2"]]
+  
+  K1 * (1 + delta1 * exp(-r1 * (x - tau1)))^(-1 / delta1) +
+    (K2 - K1) * (1 + delta2 * exp(-r2 * (x - tau2)))^(-1 / delta2)
+}
+
+#' Double Richards in two parts
+#' 
+double_richards_f_2 <- function(theta, x) {
+  
+  K1 <- theta[["K1"]]
+  tau1 <- theta[["tau1"]]
+  r1 <- theta[["r1"]]
+  delta1 <- theta[["delta1"]]
+  K2 <- theta[["K2"]]
+  tau2 <- theta[["tau2"]]
+  r2 <- theta[["r2"]]
+  delta2 <- theta[["delta2"]]
+  
+  f_1 <- K1 * (1 + delta1 * exp(-r1 * (x - tau1)))^(-1 / delta1)
+  f_2 <- (K2 - K1) * (1 + delta2 * exp(-r2 * (x - tau2)))^(-1 / delta2)
+  
+  tibble(x = x, f_1 = f_1, f_2 = f_2)
+}
+
+#' First derivative
+#' 
+double_richards_f_first_d <- function(theta, x) {
+  K1 <- theta[["K1"]]
+  tau1 <- theta[["tau1"]]
+  r1 <- theta[["r1"]]
+  delta1 <- theta[["delta1"]]
+  K2 <- theta[["K2"]]
+  tau2 <- theta[["tau2"]]
+  r2 <- theta[["r2"]]
+  delta2 <- theta[["delta2"]]
+  
+  r1 * K1 * exp(-r1 * (x - tau1)) * 
+    (delta1 * exp(-r1 * (x - tau1)) + 1)^(-1/delta1 - 1) +
+    r2 * (K2-K1) * exp(-r2 * (x - tau2)) * 
+    (delta2 * exp(-r2 * (x - tau2)) + 1)^(-1/delta2 - 1)
+}
+
+#' Second derivative
+#' 
+double_richards_f_second_d <- function(theta, x) {
+  K1 <- theta[["K1"]]
+  tau1 <- theta[["tau1"]]
+  r1 <- theta[["r1"]]
+  delta1 <- theta[["delta1"]]
+  K2 <- theta[["K2"]]
+  tau2 <- theta[["tau2"]]
+  r2 <- theta[["r2"]]
+  delta2 <- theta[["delta2"]]
+  
+  K1 * (r1^2 * (-1/delta1 - 1) * delta1 * (-exp(-2 * r1 * (x - tau1))) * 
+          (delta1 * exp(-r1 * (x - tau1)) + 1)^(-1/delta1 - 2) - r1^2 * 
+          exp(-r1 * (x - tau1)) * 
+          (delta1 * exp(-r1 * (x - tau1)) + 1)^(-1/delta1 - 1)) +
+    
+    (K2 - K1) * 
+    (r2^2 * (-1 / delta2 - 1) * 
+       delta2 * (-exp(-2 * r2 * (x - tau2))) * 
+       (delta2 * exp(-r2 * (x - tau2)) + 1)^(-1/delta2 - 2) - 
+       r2^2 * 
+       exp(-r2 * (x - tau2)) * 
+       (delta2 * exp(-r2 * (x - tau2)) + 1)^(-1/delta2 - 1))
+}
+```
+
+Let us make some illustrations by varying $r_1$ and $r_2$.
+```{r}
+situations <- 
+  expand_grid(r1 = c(.2, .5), r2 = c(.2, .5)) |> 
+  mutate(
+    K1     = 2500,
+    K2     = 5000,
+    tau1   = 20,
+    tau2   = 40,
+    delta1 = .5,
+    delta2 = .5
+  )
+```
+
+The function that simulates $C(t)$ and its first and second derivatives with respect to time for a single scenario:
+```{r}
+#' Simulation of the logistic model for some parameters
+#' 
+#' @param i row number of situations
+simu <- function(i) {
+  current_params <- situations |> slice(i)
+  current_params <- c(as_vector(current_params)) |> as.list()
+  
+  n <- 60
+  step <- .01
+  sim <-  double_richards_f(
+    theta = current_params, x = seq(1,n, by = step))
+  simD <-  double_richards_f_first_d(
+    theta = current_params, x = seq(1,n, by = step))
+  simD2 <-  double_richards_f_second_d(
+    theta = current_params, x = seq(1,n, by = step))
+  
+  tibble(
+    t = seq(1, n, by = step),
+    K1 = current_params[["K1"]],
+    r1 = current_params[["r1"]],
+    tau1 = current_params[["tau1"]],
+    delta1 = current_params[["delta1"]],
+    K2 = current_params[["K2"]],
+    r2 = current_params["r2"],
+    tau2 = current_params[["tau2"]],
+    delta2 = current_params[["delta2"]],
+    sim = sim) |> 
+    mutate(simD = simD,
+           simD2 = simD2)
+  
+}
+```
+
+Let us apply this function to all scenarios:
+```{r}
+simu_res <- map_df(1:nrow(situations), simu)
+```
+
+The thresholds:
+```{r}
+threshold_times <- 
+  simu_res |> 
+  group_by(K1, tau1, r1, K2, tau2, r2, delta1, delta2) |> 
+  summarise(threshold_time_1 = unique(tau1),
+            threshold_time_2 = unique(tau2)) |> 
+  ungroup() |> 
+  mutate(
+    r1 = str_c("$\\r_1 = ", r1, "$"),
+    r2 = str_c("$\\r_2 = ", r2, "$")
+  )
+```
+
+And the the plots:
+```{r}
+#| fig-cap: Illustration of a Double Richards model for different values for $r_1$ and $r_2$, with $K_1=2,500$, $K_2 = 5,000$, $\tau_1 = 20$, $\tau_2 = 40$", $\delta_1 = \delta_2 = .5$
+#| label: fig-illustration-double-richards-model
+p_simu_double_richards <- 
+  ggplot(
+    data =  simu_res |> 
+      mutate(r1 = str_c("$\\r_1 = ", r1, "$"),
+             r2 = str_c("$\\r_2 = ", r2, "$")
+      ),
+    mapping = aes(x = t)) +
+  geom_line(aes(y = sim, linetype = "sim")) +
+  geom_line(aes(y = simD*10, linetype = "simD")) +
+  geom_line(aes(y = simD2*10, linetype = "simD2")) +
+  geom_vline(
+    data = threshold_times, 
+    mapping = aes(xintercept = threshold_time_1),
+    colour = "red", linetype = "dotted") +
+  geom_vline(
+    data = threshold_times,
+    mapping = aes(xintercept = threshold_time_2),
+    colour = "red", linetype = "dotted") +
+  facet_grid(
+    r2 ~ r1,
+    labeller = as_labeller(
+      latex2exp::TeX, 
+      default = label_parsed
+    )
+  ) +
+  labs(x = "Time", y = latex2exp::TeX("$F(t)$")) +
+  scale_y_continuous(
+    labels = comma,
+    sec.axis = sec_axis(
+      ~./10, 
+      name = latex2exp::TeX(
+        "$\\partial F(t) / \\partial t$, $\\partial^2 F(t) / \\partial t^2$"
+      ),
+      labels = comma)) +
+  scale_linetype_manual(
+    NULL,
+    values = c("sim" = "solid", "simD" = "dashed", "simD2" = "dotdash"),
+    labels = c("sim" = latex2exp::TeX("$F(t)$"),
+               "simD" = latex2exp::TeX("$\\partial F(t) / \\partial t$"),
+               "simD2" = latex2exp::TeX("$\\partial^2 F(t) / \\partial t^2$"))
+    ) +
+  theme(axis.ticks.y = element_blank())
+
+p_simu_double_richards +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
