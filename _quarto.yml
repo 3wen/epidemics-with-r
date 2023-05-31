@@ -4,6 +4,7 @@ project:
 book:
   title: "Modelling epidemics with R"
   repo-url: https://github.com/3wen/epidemics-with-r
+  downloads: pdf
   author:
     - name: Ewen Gallic
       orcid: 0000-0003-3740-2620

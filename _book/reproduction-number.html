@@ -191,6 +191,7 @@ div.csl-indent {
       <a href="./">Modelling epidemics with R</a> 
         <div class="sidebar-tools-main">
     <a href="https://github.com/3wen/epidemics-with-r" title="Source Code" class="sidebar-tool px-1"><i class="bi bi-github"></i></a>
+    <a href="./Modelling-epidemics-with-R.pdf" title="Download PDF" class="sidebar-tool px-1"><i class="bi bi-file-pdf"></i></a>
 </div>
     </div>
       </div>
@@ -1074,8 +1075,8 @@ Reason for termination: Relative error in the sum of squares is at most `ftol'. 
 <span id="cb44-7"><a href="#cb44-7" aria-hidden="true" tabindex="-1"></a>)</span>
 <span id="cb44-8"><a href="#cb44-8" aria-hidden="true" tabindex="-1"></a>R0_i</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <div class="cell-output cell-output-stdout">
-<pre><code>     R0_mu      R0_sd 
-2.78484622 0.03818434 </code></pre>
+<pre><code>   R0_mu    R0_sd 
+2.785905 0.039255 </code></pre>
 </div>
 </div>
 <p>They can also be saved in a tibble:</p>
@@ -1091,7 +1092,7 @@ Reason for termination: Relative error in the sum of squares is at most `ftol'. 
 <pre><code># A tibble: 1 × 4
   model_type  country        R0_mu  R0_sd
   &lt;chr&gt;       &lt;chr&gt;          &lt;dbl&gt;  &lt;dbl&gt;
-1 Exponential United Kingdom  2.78 0.0382</code></pre>
+1 Exponential United Kingdom  2.79 0.0393</code></pre>
 </div>
 </div>
 <p>Then, we can plot the observed values and the estimated ones. First, let us get the estimated values, using the obtained parameters:</p>
@@ -1367,7 +1368,7 @@ Reason for termination: Relative error between `par' and the solution is at most
 <span id="cb72-8"><a href="#cb72-8" aria-hidden="true" tabindex="-1"></a>R0_i</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>    R0_mu     R0_sd 
-13.785842  2.167253 </code></pre>
+13.746803  2.135634 </code></pre>
 </div>
 </div>
 <p>They can also be saved in a tibble:</p>
@@ -1382,7 +1383,7 @@ Reason for termination: Relative error between `par' and the solution is at most
 <pre><code># A tibble: 1 × 4
   model_type      country        R0_mu R0_sd
   &lt;chr&gt;           &lt;chr&gt;          &lt;dbl&gt; &lt;dbl&gt;
-1 Gen_Exponential United Kingdom  13.8  2.17</code></pre>
+1 Gen_Exponential United Kingdom  13.7  2.14</code></pre>
 </div>
 </div>
 <p>We can compute the predicted values and store those in a tibble:</p>
